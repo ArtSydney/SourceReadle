@@ -1,54 +1,53 @@
 {
-  "id": "srd-0010",
+  "id": "srd-0013",
   "date": "2026-10-13",
   "difficulty": "easy",
-  "language": "javascript",
+  "language": "php",
   "estimatedMinutes": 5,
   "snippet": {
     "files": [
       {
-        "name": "calc.js",
-        "code": "const http = require(\"http\");\n\nfunction handler(req, res) {\n  const url = new URL(req.url, \"http://localhost\");\n  const expr = url.searchParams.get(\"expr\");\n  // Evaluate the arithmetic expression the user asked for.\n  const result = eval(expr);\n  res.end(String(result));\n}\n\nhttp.createServer(handler).listen(3000);",
+        "name": "login.php",
+        "code": "<?php\nfunction find_user($conn, $email) {\n    $sql = \"SELECT id, name FROM users WHERE email = '\" . $email . \"'\";\n    $res = mysqli_query($conn, $sql);\n    return mysqli_fetch_assoc($res);\n}\n\n$user = find_user($conn, $_GET[\"email\"]);\necho json_encode($user);",
         "notes": {
-          "4": "Parses the request URL so query parameters can be read.",
-          "5": "Reads the `expr` query parameter — fully attacker-controlled.",
-          "7": "Runs `expr` through JavaScript's `eval`.",
-          "8": "Sends the computed result back to the client.",
-          "11": "Starts the HTTP server on port 3000."
+          "3": "Builds the SQL query by concatenating `$email` directly into the string.",
+          "4": "Runs the assembled query against the database.",
+          "5": "Returns the first matching row as an associative array.",
+          "8": "Reads `email` from the query string and looks the user up."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "calc.js",
-      "line": 7,
-      "yellowRadius": 2,
+      "file": "login.php",
+      "line": 3,
+      "yellowRadius": 1,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "code-inj",
+      "answer": "sqli",
       "options": [
-        "code-inj",
         "sqli",
+        "code-inj",
         "command-inj",
-        "ssrf",
-        "open-redirect"
+        "idor",
+        "path-traversal"
       ]
     },
     "why": {
-      "answerIndex": 1,
+      "answerIndex": 2,
       "options": [
         {
-          "label": "`eval` is slow, so many requests degrade performance",
-          "whyWrong": "Performance is irrelevant; the problem is that the input is executed as code."
+          "label": "`mysqli_fetch_assoc` only returns one row, hiding duplicates",
+          "whyWrong": "Row count is irrelevant; the attacker controls the query itself."
         },
         {
-          "label": "`expr` is passed to `eval`, so any JavaScript in it runs with the server's privileges"
+          "label": "Reading from `$_GET` is always unsafe and should never be done",
+          "whyWrong": "Reading input is fine; the flaw is concatenating it into SQL without parameterization."
         },
         {
-          "label": "`String(result)` can throw when the result is an object",
-          "whyWrong": "A formatting error is trivial next to arbitrary code execution."
+          "label": "`$email` is concatenated into the SQL text, so input is parsed as part of the query, not as data"
         }
       ]
     },
@@ -56,23 +55,23 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Run eval inside a try/catch so errors don't crash the server",
-          "diff": "-  const result = eval(expr);\n+  let result;\n+  try { result = eval(expr); } catch { result = \"error\"; }",
-          "whyWrong": "Catching errors does nothing to stop the attacker's code from executing first."
+          "label": "Wrap $email in addslashes()",
+          "diff": "-    $sql = \"...WHERE email = '\" . $email . \"'\";\n+    $sql = \"...WHERE email = '\" . addslashes($email) . \"'\";",
+          "whyWrong": "addslashes is incomplete and bypassable under some charsets; escaping is not a substitute for parameters."
         },
         {
-          "label": "Parse the expression with a dedicated math parser instead of eval",
-          "diff": "-  const result = eval(expr);\n+  const result = evaluateArithmetic(expr); // a real parser, no code execution"
+          "label": "Use a prepared statement with a bound parameter",
+          "diff": "-    $sql = \"SELECT id, name FROM users WHERE email = '\" . $email . \"'\";\n-    $res = mysqli_query($conn, $sql);\n+    $stmt = mysqli_prepare($conn, \"SELECT id, name FROM users WHERE email = ?\");\n+    mysqli_stmt_bind_param($stmt, \"s\", $email);\n+    mysqli_stmt_execute($stmt);"
         },
         {
-          "label": "Cast expr to a number before evaluating",
-          "diff": "-  const result = eval(expr);\n+  const result = eval(Number(expr));",
-          "whyWrong": "`Number(expr)` of a non-numeric string is NaN, and this still calls eval — the pattern is unchanged."
+          "label": "Apply htmlspecialchars() to $email",
+          "diff": "+    $email = htmlspecialchars($email);",
+          "whyWrong": "HTML-encoding is the wrong context; it doesn't neutralize SQL metacharacters."
         },
         {
-          "label": "Set the response content type to text/plain",
-          "diff": "+  res.setHeader(\"Content-Type\", \"text/plain\");\n   const result = eval(expr);",
-          "whyWrong": "Response headers have nothing to do with executing the input."
+          "label": "Cast $email to a string",
+          "diff": "+    $email = (string)$email;",
+          "whyWrong": "It is already a string; this changes nothing about how it's parsed by the database."
         }
       ]
     }
@@ -83,28 +82,28 @@
     "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "Request `?expr=process.mainModule.require('child_process').execSync('id').toString()`. `eval` runs it, so the server executes `id` (or any command) and returns the output — full remote code execution.",
+    "exploit": "Request `?email=' OR '1'='1` and the WHERE clause becomes always-true, returning the first user. `?email=' UNION SELECT password, name FROM users -- ` pulls data out of other columns/tables.",
     "concepts": [
-      "CWE-95",
+      "CWE-89",
       "OWASP A03:2021"
     ],
     "hints": {
-      "line": "Find where user input is executed rather than just used.",
-      "bugClass": "The input becomes running code.",
-      "why": "What can `eval` run besides arithmetic?",
-      "fix": "Never eval user input — parse it instead."
+      "line": "Where does input become part of a command's text?",
+      "bugClass": "The sink is a database query.",
+      "why": "What does the database parse the email as?",
+      "fix": "Send the value as a bound parameter, not query text."
     }
   },
   "writeup": {
-    "summary": "`eval(expr)` executes the query parameter as JavaScript in the server process. Anything the Node runtime can do — read files, spawn processes, open sockets — an attacker can do by sending it as `expr`. The fix is to never pass untrusted input to `eval`; evaluate arithmetic with a dedicated parser that treats the input purely as data.",
+    "summary": "`$email` is concatenated straight into the SQL string, so a crafted value changes the query's structure — the classic SQL injection. An attacker reads arbitrary rows with `UNION SELECT` or bypasses the lookup with a tautology. Prepared statements with bound parameters send the value as data the database never parses as SQL; escaping functions are weaker and context-fragile.",
     "readNext": [
       {
-        "label": "MDN: eval() — never use with untrusted input",
-        "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/eval"
+        "label": "PHP: mysqli prepared statements",
+        "url": "https://www.php.net/manual/en/mysqli.quickstart.prepared-statements.php"
       },
       {
-        "label": "OWASP Code Injection",
-        "url": "https://owasp.org/www-community/attacks/Code_Injection"
+        "label": "OWASP SQL Injection Prevention",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"
       }
     ]
   }

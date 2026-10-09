@@ -1,5 +1,5 @@
 {
-  "id": "srd-0002",
+  "id": "srd-0005",
   "date": "2026-10-10",
   "difficulty": "medium",
   "language": "csharp",
@@ -7,64 +7,75 @@
   "snippet": {
     "files": [
       {
-        "name": "ArchiveExtractor.cs",
-        "code": "using System.IO;\nusing System.IO.Compression;\n\npublic class ArchiveExtractor\n{\n    // Extracts an uploaded .zip into a per-user directory.\n    public void Extract(string zipPath, string destinationDir)\n    {\n        Directory.CreateDirectory(destinationDir);\n        using var archive = ZipFile.OpenRead(zipPath);\n        foreach (var entry in archive.Entries)\n        {\n            if (string.IsNullOrEmpty(entry.Name))\n                continue; // skip directory entries\n\n            var target = Path.Combine(destinationDir, entry.FullName);\n            var dir = Path.GetDirectoryName(target);\n            if (dir != null)\n                Directory.CreateDirectory(dir);\n\n            entry.ExtractToFile(target, overwrite: true);\n        }\n    }\n}\n",
+        "name": "SessionStore.cs",
+        "code": "using System.IO;\nusing System.Runtime.Serialization.Formatters.Binary;\n\npublic class SessionStore\n{\n    // Session state is stored in a cookie as base64 of a serialized object.\n    public SessionState Load(string cookieValue)\n    {\n        var bytes = System.Convert.FromBase64String(cookieValue);\n        using var ms = new MemoryStream(bytes);\n        var formatter = new BinaryFormatter();\n        var state = (SessionState)formatter.Deserialize(ms);\n        return state;\n    }\n\n    public string Save(SessionState state)\n    {\n        using var ms = new MemoryStream();\n        new BinaryFormatter().Serialize(ms, state);\n        return System.Convert.ToBase64String(ms.ToArray());\n    }\n}\n",
         "notes": {
-          "9": "Creates the per-user output directory.",
-          "10": "Opens the uploaded zip for reading.",
-          "11": "Loops over every entry (file) inside the archive.",
-          "13": "Skips entries that are directories rather than files.",
-          "16": "Builds the output path by joining the destination with the entry's name, which comes from inside the zip.",
-          "17": "Gets the parent folder of that output path.",
-          "19": "Creates any intermediate subdirectories.",
-          "21": "Writes the entry's bytes to the computed path, overwriting any existing file."
+          "9": "Decodes the base64 cookie value into raw bytes.",
+          "10": "Wraps those bytes in a readable stream.",
+          "11": "Creates a BinaryFormatter — a serializer that can reconstruct arbitrary .NET types.",
+          "12": "Reads the stream, rebuilding whatever object graph it describes, then casts the result to SessionState.",
+          "13": "Returns the reconstructed session object.",
+          "19": "Save() serializes a SessionState back into the binary format.",
+          "20": "Returns it base64-encoded for use as a cookie."
         }
       }
     ]
   },
   "stages": {
-    "line": { "file": "ArchiveExtractor.cs", "line": 17, "yellowRadius": 3, "maxGuesses": 5 },
+    "line": {
+      "file": "SessionStore.cs",
+      "line": 12,
+      "yellowRadius": 3,
+      "maxGuesses": 5
+    },
     "bugClass": {
-      "answer": "zip-slip",
-      "options": ["zip-slip", "path-traversal", "ssrf", "insecure-deser", "idor", "toctou"]
+      "answer": "insecure-deser",
+      "options": [
+        "insecure-deser",
+        "xxe",
+        "code-inj",
+        "idor",
+        "weak-crypto",
+        "sqli"
+      ]
     },
     "why": {
-      "answerIndex": 1,
+      "answerIndex": 2,
       "options": [
         {
-          "label": "`ExtractToFile` with overwrite:true can clobber the user's own earlier files",
-          "whyWrong": "Overwriting within the destination is a minor concern; the real danger is writing OUTSIDE the destination entirely."
+          "label": "An attacker can edit the base64 to change their own `role` field to admin",
+          "whyWrong": "Field tampering is possible but minor next to the real problem — the payload need not be a SessionState at all."
         },
         {
-          "label": "`entry.FullName` is attacker-controlled, so the joined path can resolve outside `destinationDir`"
+          "label": "The cast on line 12 throws for an unexpected type, letting an attacker crash the app",
+          "whyWrong": "A crash is the least of it, and the cast runs only AFTER deserialization has already executed attacker code."
         },
         {
-          "label": "`ZipFile.OpenRead` loads the whole archive into memory, enabling a denial of service",
-          "whyWrong": "Memory use is unrelated. The flaw is where the files are written, not how the archive is read."
+          "label": "`Deserialize` instantiates whatever types the stream names and runs their callbacks, so a crafted cookie executes a gadget chain"
         }
       ]
     },
     "fix": {
-      "answerIndex": 2,
+      "answerIndex": 1,
       "options": [
         {
-          "label": "Strip '..' from each entry name",
-          "diff": "-            var target = Path.Combine(destinationDir, entry.FullName);\n+            var clean = entry.FullName.Replace(\"..\", \"\");\n+            var target = Path.Combine(destinationDir, clean);",
-          "whyWrong": "Naive string stripping is bypassable (e.g. '....//' collapses back to '../') and mishandles absolute paths and alternate separators."
+          "label": "Validate the object's type after deserializing",
+          "diff": "     var state = (SessionState)formatter.Deserialize(ms);\n+    if (state.GetType() != typeof(SessionState))\n+        throw new InvalidDataException();\n     return state;",
+          "whyWrong": "Too late: BinaryFormatter already instantiated the attacker's gadget chain during Deserialize. The cast/type check runs after code has executed."
         },
         {
-          "label": "Reject entries whose name contains a slash",
-          "diff": "+            if (entry.FullName.Contains('/') || entry.FullName.Contains('\\\\'))\n+                continue;\n            var target = Path.Combine(destinationDir, entry.FullName);",
-          "whyWrong": "This breaks legitimate archives with subfolders and still trusts Path.Combine with an attacker-controlled leaf; it does not verify the resolved path stays inside the destination."
+          "label": "Replace BinaryFormatter with a data-only serializer (e.g. System.Text.Json)",
+          "diff": "-    using var ms = new MemoryStream(bytes);\n-    var formatter = new BinaryFormatter();\n-    var state = (SessionState)formatter.Deserialize(ms);\n-    return state;\n+    return System.Text.Json.JsonSerializer.Deserialize<SessionState>(bytes);"
         },
         {
-          "label": "Resolve the full path and verify it stays under the destination",
-          "diff": "-            var target = Path.Combine(destinationDir, entry.FullName);\n+            var destFull = Path.GetFullPath(destinationDir + Path.DirectorySeparatorChar);\n+            var target = Path.GetFullPath(Path.Combine(destFull, entry.FullName));\n+            if (!target.StartsWith(destFull, StringComparison.Ordinal))\n+                throw new IOException($\"Blocked path traversal: {entry.FullName}\");"
+          "label": "Encrypt the cookie value",
+          "diff": "-    var bytes = System.Convert.FromBase64String(cookieValue);\n+    var bytes = Decrypt(System.Convert.FromBase64String(cookieValue));",
+          "whyWrong": "Encryption/signing stops tampering by outsiders, but the format is still BinaryFormatter; if a key leaks or the data is ever attacker-influenced, the gadget problem remains. The dangerous sink is the formatter itself."
         },
         {
-          "label": "Extract to a temp file first, then move it",
-          "diff": "-            entry.ExtractToFile(target, overwrite: true);\n+            var tmp = Path.GetTempFileName();\n+            entry.ExtractToFile(tmp, overwrite: true);\n+            File.Move(tmp, target, overwrite: true);",
-          "whyWrong": "The final destination is still `target`, computed from the unchecked entry name. Staging through a temp file changes nothing about where the data lands."
+          "label": "Wrap Deserialize in a try/catch and return a default session",
+          "diff": "-    var state = (SessionState)formatter.Deserialize(ms);\n-    return state;\n+    try { return (SessionState)formatter.Deserialize(ms); }\n+    catch { return new SessionState(); }",
+          "whyWrong": "A gadget chain executes its payload during deserialization and may complete without throwing. Catching exceptions does not prevent the code execution."
         }
       ]
     }
@@ -72,23 +83,32 @@
   "source": {
     "origin": "original",
     "license": "CC0-1.0",
-    "attribution": "SourceReadle original (Zip Slip pattern, per Snyk 2018 research)"
+    "attribution": "SourceReadle original (BinaryFormatter RCE pattern; see Microsoft BinaryFormatter security guide)"
   },
   "training": {
-    "exploit": "Craft a zip containing an entry named `../../../../etc/cron.d/pwn` (or an absolute path). When extracted, `Path.Combine(dest, \"../../../../etc/cron.d/pwn\")` resolves outside the per-user directory, so `ExtractToFile` drops an attacker-controlled file into a system location — here, a cron job that runs their command.",
-    "concepts": ["CWE-22", "Zip Slip"],
+    "exploit": "Use a tool like ysoserial.net to generate a `TypeConfuseDelegate` gadget-chain payload that runs `calc`/`id`, base64-encode it, and send it as the session cookie. When `Load` calls `Deserialize`, the chain fires during object reconstruction and the command runs on the server — remote code execution from an unauthenticated cookie.",
+    "concepts": [
+      "CWE-502",
+      "OWASP A08:2021"
+    ],
     "hints": {
-      "line": "The dangerous step is where a name from the archive becomes a filesystem path.",
-      "bugClass": "It's a traversal — specifically the archive-extraction variant.",
-      "why": "Who controls `entry.FullName`, and where can `..` take the path?",
-      "fix": "Canonicalize the final path and prove it's still inside the destination."
+      "line": "The sink is the single call that turns bytes back into a live object.",
+      "bugClass": "Untrusted bytes become live objects.",
+      "why": "Does the cast on line 12 happen before or after the object is built?",
+      "fix": "Use a serializer that only reads data into a known type."
     }
   },
   "writeup": {
-    "summary": "`entry.FullName` comes from inside the zip and can be `../../etc/cron.d/evil` or an absolute path. `Path.Combine` happily returns a path outside `destinationDir` when the second argument climbs out (and discards the base entirely if the entry is absolute), so `ExtractToFile` writes attacker-chosen files anywhere the process can reach. This is the Zip Slip class. The correct fix canonicalizes the target with `Path.GetFullPath` and confirms it is still prefixed by the destination before writing; everything else either breaks valid archives or filters symptoms rather than validating the resolved path.",
+    "summary": "`BinaryFormatter.Deserialize` reconstructs whatever types the serialized stream names and invokes their callbacks, so a crafted cookie can drive a 'gadget chain' (e.g. via `TypeConfuseDelegate`) to run arbitrary code the moment it is deserialized — before any cast or validation. Because the input is a user-controlled cookie, this is remote code execution. Microsoft has deprecated BinaryFormatter for exactly this reason. The fix is to stop using it: a data-only serializer like System.Text.Json reads fields into a known type and never instantiates arbitrary types or runs their callbacks.",
     "readNext": [
-      { "label": "Snyk: Zip Slip vulnerability", "url": "https://security.snyk.io/research/zip-slip-vulnerability" },
-      { "label": "OWASP Path Traversal", "url": "https://owasp.org/www-community/attacks/Path_Traversal" }
+      {
+        "label": "Microsoft: BinaryFormatter security guide",
+        "url": "https://learn.microsoft.com/en-us/dotnet/standard/serialization/binaryformatter-security-guide"
+      },
+      {
+        "label": "YSoSerial.Net (gadget chains)",
+        "url": "https://github.com/pwntester/ysoserial.net"
+      }
     ]
   }
 }

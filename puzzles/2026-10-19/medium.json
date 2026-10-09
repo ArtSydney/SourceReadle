@@ -1,54 +1,54 @@
 {
-  "id": "srd-0029",
+  "id": "srd-0032",
   "date": "2026-10-19",
   "difficulty": "medium",
-  "language": "java",
+  "language": "python",
   "estimatedMinutes": 15,
   "snippet": {
     "files": [
       {
-        "name": "XmlParser.java",
-        "code": "import javax.xml.parsers.*;\nimport org.w3c.dom.Document;\nimport java.io.InputStream;\n\n// Parse an XML document uploaded by a user.\npublic Document parse(InputStream xml) throws Exception {\n    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();\n    DocumentBuilder db = dbf.newDocumentBuilder();\n    return db.parse(xml);\n}",
+        "name": "fetch.py",
+        "code": "import requests\nfrom flask import request, Response\n\n@app.route(\"/fetch\")\ndef fetch():\n    # Proxy a remote image so pages can embed it over https.\n    url = request.args.get(\"url\")\n    r = requests.get(url, timeout=5)\n    return Response(r.content, content_type=r.headers.get(\"Content-Type\"))",
         "notes": {
-          "6": "Parses an uploaded XML stream into a DOM document.",
-          "7": "Creates the parser factory with its DEFAULT settings.",
-          "8": "Builds a parser from the factory.",
-          "9": "Parses the input — where entities and DTDs are resolved."
+          "4": "The /fetch proxy route.",
+          "7": "Reads the `url` query parameter — attacker-controlled.",
+          "8": "The server fetches that URL (requests follows redirects by default).",
+          "9": "Returns the fetched bytes and content type to the client."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "XmlParser.java",
-      "line": 7,
-      "yellowRadius": 2,
+      "file": "fetch.py",
+      "line": 8,
+      "yellowRadius": 1,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "xxe",
+      "answer": "ssrf",
       "options": [
-        "xxe",
-        "insecure-deser",
         "ssrf",
+        "open-redirect",
         "path-traversal",
-        "code-inj",
-        "idor"
+        "xxe",
+        "idor",
+        "command-inj"
       ]
     },
     "why": {
       "answerIndex": 0,
       "options": [
         {
-          "label": "The factory is left at defaults, which resolve DTDs and external entities, so a `SYSTEM` entity in the input reads local files or makes server-side requests during parsing"
+          "label": "`url` is user-controlled and fetched by the server, so it can reach internal-only hosts (cloud metadata, localhost services) and the body is returned to the attacker"
         },
         {
-          "label": "`newInstance()` is expensive and should be cached",
-          "whyWrong": "Performance is unrelated to the external-entity exposure."
+          "label": "`requests.get` without a session is inefficient",
+          "whyWrong": "Efficiency is irrelevant to the SSRF."
         },
         {
-          "label": "The InputStream is never closed, leaking a file handle",
-          "whyWrong": "A resource leak is a robustness nit, not the disclosure/SSRF primitive."
+          "label": "`r.content` loads the whole body into memory, risking exhaustion",
+          "whyWrong": "A possible DoS, but not why this is SSRF; the destination being attacker-chosen is."
         }
       ]
     },
@@ -56,23 +56,23 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Validate the parsed document against a schema afterward",
-          "diff": "+    validate(db.parse(xml));",
-          "whyWrong": "External entities resolve during parsing, before any post-parse validation runs."
+          "label": "Reject urls containing 'localhost' or '127.0.0.1'",
+          "diff": "+    if \"localhost\" in url or \"127.0.0.1\" in url: abort(400)",
+          "whyWrong": "Alternate IP encodings, other private ranges, and DNS rebinding bypass substring checks."
         },
         {
-          "label": "Disable DOCTYPE declarations and external entities on the factory before parsing",
-          "diff": "     DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();\n+    dbf.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true);\n+    dbf.setFeature(\"http://xml.org/sax/features/external-general-entities\", false);\n+    dbf.setFeature(\"http://xml.org/sax/features/external-parameter-entities\", false);\n+    dbf.setXIncludeAware(false);\n+    dbf.setExpandEntityReferences(false);"
+          "label": "Allow only http/https, resolve the host and reject private/loopback/link-local ranges, and disable redirects",
+          "diff": "-    r = requests.get(url, timeout=5)\n+    validate_public_url(url)        # scheme check + resolve + block RFC1918/loopback/link-local\n+    r = requests.get(url, timeout=5, allow_redirects=False)"
         },
         {
-          "label": "Impose a maximum input size",
-          "diff": "+    if (available(xml) > 1_000_000) throw new IOException();",
-          "whyWrong": "A tiny document with a single external entity still reads files or triggers SSRF."
+          "label": "Only return the body when Content-Type is an image",
+          "diff": "+    if not r.headers.get(\"Content-Type\",\"\").startswith(\"image/\"): abort(400)",
+          "whyWrong": "The internal request already happened; blind SSRF and timing still leak information."
         },
         {
-          "label": "Catch exceptions from db.parse()",
-          "diff": "+    try { return db.parse(xml); } catch (Exception e) { return null; }",
-          "whyWrong": "The external read already happened during parsing; catching afterward doesn't prevent it."
+          "label": "Lower the timeout to 2 seconds",
+          "diff": "-    r = requests.get(url, timeout=5)\n+    r = requests.get(url, timeout=2)",
+          "whyWrong": "A timeout limits duration, not which host is contacted."
         }
       ]
     }
@@ -80,27 +80,27 @@
   "source": {
     "origin": "original",
     "license": "CC0-1.0",
-    "attribution": "SourceReadle original (classic Java XXE via default DocumentBuilderFactory)"
+    "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "Upload XML beginning with `<!DOCTYPE r [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>` and reference `&x;` in an element — the parser inlines the file's contents, which the app then stores or echoes. Swap in `SYSTEM \"http://169.254.169.254/...\"` for SSRF, or use parameter entities to exfiltrate file contents out-of-band.",
+    "exploit": "Request `/fetch?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/` to read cloud credentials, or `http://127.0.0.1:8080/admin` to reach an internal admin panel. Because `requests` follows redirects by default, a public URL that 302s to an internal one also works.",
     "concepts": [
-      "CWE-611",
-      "OWASP A05:2021"
+      "CWE-918",
+      "OWASP A10:2021"
     ],
     "hints": {
-      "line": "The flaw is what the parser is allowed to do, set where it's created.",
-      "bugClass": "External references in XML get resolved.",
-      "why": "What do default settings let a `SYSTEM` entity reach?",
-      "fix": "Turn off DTDs and external entities on the factory."
+      "line": "Where does the server fetch a user-supplied address?",
+      "bugClass": "The server reaches a destination the user chose.",
+      "why": "What can the server's network position reach that the client can't?",
+      "fix": "Validate the resolved host and forbid redirects."
     }
   },
   "writeup": {
-    "summary": "A default `DocumentBuilderFactory` resolves DTDs and external entities, so an uploaded document declaring `<!ENTITY x SYSTEM \"file:///...\">` makes the parser read local files (disclosure) or fetch URLs (SSRF) as it parses. The fix hardens the factory before parsing: disallow DOCTYPE declarations and disable external general/parameter entities (and XInclude). Schema validation and size limits don't help because the external fetch happens during parsing itself.",
+    "summary": "`fetch` requests any URL the user supplies and returns the body, from the server's network position — SSRF. Attackers target cloud metadata and internal services to steal credentials and data, and default redirect-following lets a public URL pivot inward. The fix validates the scheme, resolves the host and rejects private/loopback/link-local ranges, and disables redirects. Blocklisting hostnames, filtering by content type, or tuning the timeout don't prevent the internal request.",
     "readNext": [
       {
-        "label": "OWASP XXE Prevention Cheat Sheet (Java)",
-        "url": "https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html#java"
+        "label": "OWASP SSRF Prevention Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html"
       }
     ]
   }

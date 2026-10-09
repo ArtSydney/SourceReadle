@@ -1,55 +1,54 @@
 {
-  "id": "srd-0018",
+  "id": "srd-0021",
   "date": "2026-10-15",
   "difficulty": "hard",
-  "language": "java",
+  "language": "php",
   "estimatedMinutes": 30,
   "snippet": {
     "files": [
       {
-        "name": "MultipartParser.java",
-        "code": "// Simplified from Struts2 Jakarta multipart parser, pre-patch.\npublic void parse(HttpServletRequest req) {\n    try {\n        upload.parseRequest(req);\n    } catch (FileUploadException e) {\n        String contentType = req.getContentType();\n        // Build a localized error that embeds the bad Content-Type.\n        String msg = LocalizedTextUtil.findText(\n            getClass(), \"struts.messages.upload.error.parse\",\n            locale, \"Error\", new Object[]{ contentType });\n        addActionError(msg);   // findText evaluates %{...} as OGNL\n    }\n}",
+        "name": "mail.php",
+        "code": "// Simplified from PHPMailer mailSend(), pre-5.2.18 (CVE-2016-10033).\npublic function mailSend($header, $body) {\n    $sender = $this->Sender;                 // taken from the From address\n    if ($sender != '') {\n        // Pass the envelope sender to sendmail via -f.\n        $params = sprintf('-oi -f%s', escapeshellcmd($sender));\n        mail($this->to, $this->subj, $body, $header, $params);\n    }\n}",
         "notes": {
-          "4": "Attempts to parse the multipart upload.",
-          "5": "If parsing fails (which the attacker can force), handle the error.",
-          "6": "Reads the request's Content-Type header — attacker-controlled.",
-          "8": "Builds a localized error message that includes the Content-Type as a parameter.",
-          "11": "Adds the error. The message text is run through OGNL expression evaluation."
+          "3": "The envelope sender, derived from the user-supplied From address.",
+          "4": "Only act if a sender was set.",
+          "6": "Builds the extra-parameters string for sendmail, escaping the sender with escapeshellcmd.",
+          "7": "Calls PHP's mail(); the 5th argument is passed on sendmail's command line."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "MultipartParser.java",
-      "line": 8,
-      "yellowRadius": 3,
+      "file": "mail.php",
+      "line": 6,
+      "yellowRadius": 1,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "code-inj",
+      "answer": "command-inj",
       "options": [
-        "code-inj",
-        "log-inj",
-        "insecure-deser",
-        "ssrf",
         "command-inj",
-        "xxe"
+        "code-inj",
+        "path-traversal",
+        "ssrf",
+        "sqli",
+        "insecure-deser"
       ]
     },
     "why": {
-      "answerIndex": 1,
+      "answerIndex": 0,
       "options": [
         {
-          "label": "`parseRequest` buffers the whole upload in memory, enabling a DoS",
-          "whyWrong": "Memory use isn't the issue; the error-handling path evaluates attacker input as code."
+          "label": "`escapeshellcmd` does not quote spaces, so a crafted Sender injects extra sendmail options (e.g. `-X` to write a file), which can drop a PHP webshell"
         },
         {
-          "label": "The attacker-controlled Content-Type is placed into a message that `findText` evaluates as an OGNL expression, so a `%{...}` payload runs Java code"
+          "label": "sendmail is slow, so a flood of messages backs up the queue",
+          "whyWrong": "Throughput is unrelated; the flaw is argument injection into the sendmail command."
         },
         {
-          "label": "`getContentType()` may return null and cause a NullPointerException",
-          "whyWrong": "A possible NPE is a crash, not the remote code execution this creates."
+          "label": "The From address can be spoofed, enabling phishing emails",
+          "whyWrong": "Spoofing is a lesser concern than injecting sendmail arguments that write files."
         }
       ]
     },
@@ -57,53 +56,53 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Strip '%{' and '${' from the Content-Type",
-          "diff": "+        contentType = contentType.replace(\"%{\", \"\").replace(\"${\", \"\");",
-          "whyWrong": "Nested/obfuscated expressions can reconstruct the markers after naive stripping."
+          "label": "Remove semicolons from $sender",
+          "diff": "+        $sender = str_replace(';', '', $sender);",
+          "whyWrong": "The attack uses spaces and option tokens like `-X`/`-O`, not semicolons."
         },
         {
-          "label": "Do not pass user-controlled text through OGNL; build the error message without expression evaluation",
-          "diff": "-        String msg = LocalizedTextUtil.findText(\n-            getClass(), \"struts.messages.upload.error.parse\",\n-            locale, \"Error\", new Object[]{ contentType });\n-        addActionError(msg);\n+        addActionError(\"Upload parse error\"); // no user text evaluated as OGNL"
+          "label": "Validate $sender is a well-formed email address (no spaces or option-like tokens) and refuse it otherwise",
+          "diff": "-        $params = sprintf('-oi -f%s', escapeshellcmd($sender));\n+        if (!PHPMailer::validateAddress($sender)) {\n+            throw new Exception('Invalid sender address');\n+        }\n+        $params = sprintf('-oi -f%s', escapeshellarg($sender));"
         },
         {
-          "label": "Return HTTP 400 when parsing fails",
-          "diff": "+        resp.setStatus(400);\n         String msg = LocalizedTextUtil.findText(...);",
-          "whyWrong": "The OGNL has already been evaluated while building `msg`, before any response status is set."
+          "label": "Base64-encode $sender before using it",
+          "diff": "+        $sender = base64_encode($sender);",
+          "whyWrong": "sendmail won't accept an encoded address and this doesn't stop a crafted plaintext address from being used elsewhere."
         }
       ]
     }
   },
   "source": {
     "origin": "cve",
-    "cve": "CVE-2017-5638",
-    "project": "Apache Struts 2",
-    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2017-5638",
-    "license": "Apache-2.0",
-    "attribution": "Apache Struts 2, CVE-2017-5638, simplified"
+    "cve": "CVE-2016-10033",
+    "project": "PHPMailer",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2016-10033",
+    "license": "LGPL-2.1-only",
+    "attribution": "PHPMailer, CVE-2016-10033, simplified"
   },
   "training": {
-    "exploit": "Send a request whose `Content-Type` header is a malformed multipart value containing an OGNL payload, e.g. `%{(#cmd='id').(#execute=@java.lang.Runtime@getRuntime().exec(#cmd))...}`. Parsing fails, the error builder runs the Content-Type through `findText`/OGNL, and the embedded expression executes the command — unauthenticated RCE. (This was the Equifax-breach bug.)",
+    "exploit": "Set the From address so the derived Sender is like `\"attacker\\\" -oQueueDirectory=/tmp -X/var/www/html/x.php foo@evil.com\"`. `escapeshellcmd` leaves the spaces intact, so sendmail parses `-X/var/www/html/x.php` and writes a log file — containing the attacker-chosen email body with PHP code — to the web root, giving a webshell and remote code execution.",
     "concepts": [
-      "CWE-94",
-      "CVE-2017-5638"
+      "CWE-88",
+      "CVE-2016-10033"
     ],
     "hints": {
-      "line": "The RCE happens while constructing the error message.",
-      "bugClass": "Attacker text is evaluated as an expression language.",
-      "why": "What does findText do with `%{...}` in the text?",
-      "fix": "Never evaluate user-controlled strings as OGNL."
+      "line": "The flaw is how the sender is escaped before reaching sendmail.",
+      "bugClass": "Extra arguments are injected into a command.",
+      "why": "Does escapeshellcmd stop a value from becoming additional CLI options?",
+      "fix": "Reject anything that isn't a clean email address."
     }
   },
   "writeup": {
-    "summary": "When multipart parsing failed, Struts built a localized error message that embedded the raw `Content-Type` header and then evaluated that message as an OGNL expression. An attacker sent a `Content-Type` containing a `%{...}` payload; forcing a parse error made Struts evaluate it, executing arbitrary Java — unauthenticated remote code execution (the 2017 bug behind the Equifax breach). The real fix stopped evaluating user-controlled error text as OGNL; stripping expression markers was bypassable.",
+    "summary": "PHP's `mail()` passes its 5th argument onto sendmail's command line. `escapeshellcmd` neutralizes shell metacharacters but does not quote spaces, so a Sender crafted with spaces and sendmail options (`-O`, `-X`) becomes extra command-line arguments. `-X` makes sendmail write a log file — including attacker-controlled message content — to a web-accessible path, producing a PHP webshell and remote code execution. The fix validates that the sender is a well-formed address before use (and quotes it), rejecting values that carry option tokens.",
     "readNext": [
       {
-        "label": "CVE-2017-5638 (NVD)",
-        "url": "https://nvd.nist.gov/vuln/detail/CVE-2017-5638"
+        "label": "CVE-2016-10033 (NVD)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2016-10033"
       },
       {
-        "label": "Apache Struts S2-045 advisory",
-        "url": "https://cwiki.apache.org/confluence/display/WW/S2-045"
+        "label": "Legal Hackers advisory (PHPMailer RCE)",
+        "url": "https://legalhackers.com/advisories/PHPMailer-Exploit-Remote-Code-Exec-CVE-2016-10033-Vuln.html"
       }
     ]
   }

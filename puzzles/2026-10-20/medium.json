@@ -1,54 +1,53 @@
 {
-  "id": "srd-0032",
+  "id": "srd-0035",
   "date": "2026-10-20",
   "difficulty": "medium",
-  "language": "python",
+  "language": "ruby",
   "estimatedMinutes": 15,
   "snippet": {
     "files": [
       {
-        "name": "fetch.py",
-        "code": "import requests\nfrom flask import request, Response\n\n@app.route(\"/fetch\")\ndef fetch():\n    # Proxy a remote image so pages can embed it over https.\n    url = request.args.get(\"url\")\n    r = requests.get(url, timeout=5)\n    return Response(r.content, content_type=r.headers.get(\"Content-Type\"))",
+        "name": "import.rb",
+        "code": "require \"yaml\"\n\n# Import settings a user uploaded as a YAML document.\ndef import_settings(yaml_text)\n  settings = YAML.load(yaml_text)\n  apply(settings)\nend",
         "notes": {
-          "4": "The /fetch proxy route.",
-          "7": "Reads the `url` query parameter — attacker-controlled.",
-          "8": "The server fetches that URL (requests follows redirects by default).",
-          "9": "Returns the fetched bytes and content type to the client."
+          "4": "Takes YAML text uploaded by the user.",
+          "5": "Parses it. Classic `YAML.load` (Psych < 4 / `unsafe_load`) can build arbitrary Ruby objects.",
+          "6": "Applies the resulting settings object."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "fetch.py",
-      "line": 8,
+      "file": "import.rb",
+      "line": 5,
       "yellowRadius": 1,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "ssrf",
+      "answer": "insecure-deser",
       "options": [
-        "ssrf",
-        "open-redirect",
-        "path-traversal",
+        "insecure-deser",
+        "code-inj",
         "xxe",
+        "sqli",
         "idor",
-        "command-inj"
+        "ssrf"
       ]
     },
     "why": {
       "answerIndex": 0,
       "options": [
         {
-          "label": "`url` is user-controlled and fetched by the server, so it can reach internal-only hosts (cloud metadata, localhost services) and the body is returned to the attacker"
+          "label": "`YAML.load` instantiates arbitrary Ruby objects from tags like `!ruby/object:...`, so a crafted document can assemble a gadget chain and execute code during parsing"
         },
         {
-          "label": "`requests.get` without a session is inefficient",
-          "whyWrong": "Efficiency is irrelevant to the SSRF."
+          "label": "`YAML.load` is slower than `JSON.parse`",
+          "whyWrong": "Performance is irrelevant to the code-execution risk."
         },
         {
-          "label": "`r.content` loads the whole body into memory, risking exhaustion",
-          "whyWrong": "A possible DoS, but not why this is SSRF; the destination being attacker-chosen is."
+          "label": "`apply` may receive nil if the YAML is empty",
+          "whyWrong": "A nil check is robustness, not the deserialization flaw."
         }
       ]
     },
@@ -56,23 +55,18 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Reject urls containing 'localhost' or '127.0.0.1'",
-          "diff": "+    if \"localhost\" in url or \"127.0.0.1\" in url: abort(400)",
-          "whyWrong": "Alternate IP encodings, other private ranges, and DNS rebinding bypass substring checks."
+          "label": "Wrap YAML.load in begin/rescue",
+          "diff": "-  settings = YAML.load(yaml_text)\n+  settings = begin; YAML.load(yaml_text); rescue; {}; end",
+          "whyWrong": "Object construction (and the gadget) happens during load; rescuing afterward is too late."
         },
         {
-          "label": "Allow only http/https, resolve the host and reject private/loopback/link-local ranges, and disable redirects",
-          "diff": "-    r = requests.get(url, timeout=5)\n+    validate_public_url(url)        # scheme check + resolve + block RFC1918/loopback/link-local\n+    r = requests.get(url, timeout=5, allow_redirects=False)"
+          "label": "Use YAML.safe_load with an allowlist of permitted classes",
+          "diff": "-  settings = YAML.load(yaml_text)\n+  settings = YAML.safe_load(yaml_text, permitted_classes: [Symbol, Date])"
         },
         {
-          "label": "Only return the body when Content-Type is an image",
-          "diff": "+    if not r.headers.get(\"Content-Type\",\"\").startswith(\"image/\"): abort(400)",
-          "whyWrong": "The internal request already happened; blind SSRF and timing still leak information."
-        },
-        {
-          "label": "Lower the timeout to 2 seconds",
-          "diff": "-    r = requests.get(url, timeout=5)\n+    r = requests.get(url, timeout=2)",
-          "whyWrong": "A timeout limits duration, not which host is contacted."
+          "label": "Check that settings is a Hash after loading",
+          "diff": "-  settings = YAML.load(yaml_text)\n+  settings = YAML.load(yaml_text)\n+  raise unless settings.is_a?(Hash)",
+          "whyWrong": "The dangerous objects are already instantiated during load, before the type check runs."
         }
       ]
     }
@@ -80,27 +74,31 @@
   "source": {
     "origin": "original",
     "license": "CC0-1.0",
-    "attribution": "SourceReadle original"
+    "attribution": "SourceReadle original (unsafe YAML.load / Psych)"
   },
   "training": {
-    "exploit": "Request `/fetch?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/` to read cloud credentials, or `http://127.0.0.1:8080/admin` to reach an internal admin panel. Because `requests` follows redirects by default, a public URL that 302s to an internal one also works.",
+    "exploit": "Upload a YAML document using object tags (e.g. `!ruby/object:...`) that reconstruct a known gadget chain — historically via classes reachable in Rails/Gem — so that merely loading it runs an attacker command. The payload executes while `YAML.load` builds the object graph, before `apply` is ever called.",
     "concepts": [
-      "CWE-918",
-      "OWASP A10:2021"
+      "CWE-502",
+      "OWASP A08:2021"
     ],
     "hints": {
-      "line": "Where does the server fetch a user-supplied address?",
-      "bugClass": "The server reaches a destination the user chose.",
-      "why": "What can the server's network position reach that the client can't?",
-      "fix": "Validate the resolved host and forbid redirects."
+      "line": "The sink turns text into live Ruby objects.",
+      "bugClass": "Untrusted input becomes arbitrary objects.",
+      "why": "What can a YAML `!ruby/object` tag construct?",
+      "fix": "Restrict which classes the parser may build."
     }
   },
   "writeup": {
-    "summary": "`fetch` requests any URL the user supplies and returns the body, from the server's network position — SSRF. Attackers target cloud metadata and internal services to steal credentials and data, and default redirect-following lets a public URL pivot inward. The fix validates the scheme, resolves the host and rejects private/loopback/link-local ranges, and disables redirects. Blocklisting hostnames, filtering by content type, or tuning the timeout don't prevent the internal request.",
+    "summary": "Classic `YAML.load` (Psych before 4, and `unsafe_load` after) deserializes arbitrary Ruby objects via tags such as `!ruby/object:`, so an uploaded document can assemble a gadget chain and execute code during parsing. `YAML.safe_load` with an explicit `permitted_classes` list restricts construction to benign types, treating the input as data. Rescuing exceptions or type-checking the result is too late — the objects are built (and the gadget fires) during the load itself.",
     "readNext": [
       {
-        "label": "OWASP SSRF Prevention Cheat Sheet",
-        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html"
+        "label": "Ruby Psych: load vs safe_load",
+        "url": "https://docs.ruby-lang.org/en/master/Psych.html"
+      },
+      {
+        "label": "OWASP Deserialization Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html"
       }
     ]
   }

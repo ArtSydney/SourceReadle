@@ -1,0 +1,112 @@
+{
+  "id": "srd-0001",
+  "date": "2026-10-09",
+  "difficulty": "easy",
+  "language": "python",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "accounts.py",
+        "code": "import sqlite3\n\ndef get_db():\n    return sqlite3.connect(\"app.db\")\n\ndef find_user(username):\n    db = get_db()\n    cur = db.cursor()\n    query = \"SELECT id, email, role FROM users WHERE username = '%s'\" % username\n    cur.execute(query)\n    return cur.fetchone()\n\ndef login(username, password):\n    user = find_user(username)\n    if user is None:\n        return None\n    return check_password(user, password)\n",
+        "notes": {
+          "4": "Opens a connection to the SQLite database file.",
+          "7": "Gets a cursor — the object used to run SQL statements.",
+          "9": "Builds the SQL as a string, substituting `username` straight into the text with `%`.",
+          "10": "Sends that finished string to the database engine to execute.",
+          "11": "Returns the first matching row (id, email, role), or None if there is none.",
+          "14": "Looks up the row for the submitted username before checking the password."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "accounts.py",
+      "line": 9,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "sqli",
+      "options": [
+        "sqli",
+        "code-inj",
+        "path-traversal",
+        "idor",
+        "command-inj"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "The query is slow without an index on `username`, so it times out",
+          "whyWrong": "Performance has nothing to do with it. The flaw is that input changes the query's meaning, not its speed."
+        },
+        {
+          "label": "`username` is concatenated into the SQL text, so input is parsed as SQL, not data"
+        },
+        {
+          "label": "`fetchone()` returns only the first row, hiding other matching users",
+          "whyWrong": "Which row is returned is irrelevant; the problem is the attacker controls the query structure in the first place."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Escape single quotes in the username",
+          "diff": "-    query = \"SELECT id, email, role FROM users WHERE username = '%s'\" % username\n+    safe = username.replace(\"'\", \"''\")\n+    query = \"SELECT id, email, role FROM users WHERE username = '%s'\" % safe\n    cur.execute(query)",
+          "whyWrong": "Manual quote-escaping is incomplete and easy to bypass (e.g. backslash tricks, numeric contexts). Use parameters, not escaping."
+        },
+        {
+          "label": "Use a parameterized query",
+          "diff": "-    query = \"SELECT id, email, role FROM users WHERE username = '%s'\" % username\n-    cur.execute(query)\n+    query = \"SELECT id, email, role FROM users WHERE username = ?\"\n+    cur.execute(query, (username,))"
+        },
+        {
+          "label": "Reject usernames containing spaces",
+          "diff": "+    if \" \" in username:\n+        raise ValueError(\"invalid username\")\n    query = \"SELECT id, email, role FROM users WHERE username = '%s'\" % username",
+          "whyWrong": "A denylist of characters does not stop injection; payloads need no spaces, and valid data may contain them."
+        },
+        {
+          "label": "Wrap the query in a transaction",
+          "diff": "+    db.execute(\"BEGIN\")\n    query = \"SELECT id, email, role FROM users WHERE username = '%s'\" % username\n    cur.execute(query)\n+    db.execute(\"COMMIT\")",
+          "whyWrong": "Transactions control atomicity, not input trust. The string is still built from raw input."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Submit the username `' OR '1'='1' -- `. The query becomes `... WHERE username = '' OR '1'='1' --'`, whose `WHERE` is always true, so `fetchone()` returns the first row in the table — often the admin. The `--` comments out the rest. No password is ever checked if `find_user` alone is trusted.",
+    "concepts": [
+      "CWE-89",
+      "OWASP A03:2021 Injection"
+    ],
+    "hints": {
+      "line": "Look for the spot where untrusted input becomes part of a command's text.",
+      "bugClass": "The input ends up inside a database query.",
+      "why": "Ask what the database *parses* the username as.",
+      "fix": "The data must reach the engine as a value, not as query text."
+    }
+  },
+  "writeup": {
+    "summary": "`find_user` builds a SQL string with `%` formatting straight from `username`, so the input is parsed as SQL. A username of `' OR '1'='1' --` turns the `WHERE` clause into a tautology and returns the first user — often an admin. The fix passes `username` as a bound parameter (`?`), so the driver sends it as data and it can never change the query's structure. Escaping quotes by hand (option 1) looks similar but misses edge cases; parameterization is the only reliable answer.",
+    "readNext": [
+      {
+        "label": "Python sqlite3 parameter substitution docs",
+        "url": "https://docs.python.org/3/library/sqlite3.html#sqlite3-placeholders"
+      },
+      {
+        "label": "OWASP SQL Injection Prevention Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"
+      }
+    ]
+  }
+}

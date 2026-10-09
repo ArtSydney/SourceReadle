@@ -1,52 +1,52 @@
 {
-  "id": "srd-0028",
+  "id": "srd-0031",
   "date": "2026-10-19",
   "difficulty": "easy",
-  "language": "python",
+  "language": "javascript",
   "estimatedMinutes": 5,
   "snippet": {
     "files": [
       {
-        "name": "login.py",
-        "code": "from flask import Flask, request, redirect\n\napp = Flask(__name__)\n\n@app.route(\"/login\")\ndef login():\n    # ... authenticate the user ...\n    next_url = request.args.get(\"next\", \"/\")\n    return redirect(next_url)",
+        "name": "db.js",
+        "code": "const mysql = require(\"mysql2\");\nconst pool = mysql.createPool({ /* ... */ });\n\nfunction getOrder(orderId, cb) {\n  // Fetch an order by id.\n  const sql = `SELECT * FROM orders WHERE id = ${orderId}`;\n  pool.query(sql, cb);\n}",
         "notes": {
-          "5": "The /login route.",
-          "8": "Reads the `next` query parameter (where to go after login) — attacker-controlled.",
-          "9": "Redirects the browser to that value."
+          "4": "Fetches an order; `orderId` comes from the request.",
+          "6": "Builds the SQL with a template literal, interpolating `orderId` into the text.",
+          "7": "Runs the assembled query."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "login.py",
-      "line": 9,
+      "file": "db.js",
+      "line": 6,
       "yellowRadius": 1,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "open-redirect",
+      "answer": "sqli",
       "options": [
-        "open-redirect",
-        "ssrf",
-        "path-traversal",
+        "sqli",
+        "code-inj",
         "idor",
-        "code-inj"
+        "command-inj",
+        "ssrf"
       ]
     },
     "why": {
       "answerIndex": 2,
       "options": [
         {
-          "label": "`redirect` issues a 302 that browsers don't cache",
-          "whyWrong": "Caching is irrelevant to the redirect abuse."
+          "label": "Template literals are slower than string concatenation",
+          "whyWrong": "Performance is irrelevant; the interpolation into SQL is the problem."
         },
         {
-          "label": "The default of `/` means missing params break the flow",
-          "whyWrong": "The default is a usability detail, not the vulnerability."
+          "label": "`pool.query` reuses connections, which can mix up results",
+          "whyWrong": "Pooling is safe and unrelated to the injection."
         },
         {
-          "label": "`next_url` is attacker-controlled and used as the redirect target, so a link to this trusted site can bounce victims to an attacker's site (phishing)"
+          "label": "`orderId` is interpolated into the SQL text, so the database parses attacker input as part of the query"
         }
       ]
     },
@@ -54,23 +54,23 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Reject next if it starts with 'http'",
-          "diff": "+    if next_url.startswith(\"http\"): next_url = \"/\"\n     return redirect(next_url)",
-          "whyWrong": "`//evil.com` (protocol-relative) and backslash tricks bypass this and still redirect off-site."
+          "label": "Wrap orderId in quotes in the template",
+          "diff": "-  const sql = `SELECT * FROM orders WHERE id = ${orderId}`;\n+  const sql = `SELECT * FROM orders WHERE id = '${orderId}'`;",
+          "whyWrong": "Still interpolated; `' OR '1'='1` closes the quote and injects."
         },
         {
-          "label": "Allow only a local path: parse it and require an empty scheme and netloc",
-          "diff": "-    next_url = request.args.get(\"next\", \"/\")\n+    raw = request.args.get(\"next\", \"/\")\n+    u = urlparse(raw)\n+    next_url = raw if (not u.scheme and not u.netloc and raw.startswith(\"/\")) else \"/\""
+          "label": "Use a parameterized query with ? and pass orderId as a bound value",
+          "diff": "-  const sql = `SELECT * FROM orders WHERE id = ${orderId}`;\n-  pool.query(sql, cb);\n+  pool.query(\"SELECT * FROM orders WHERE id = ?\", [orderId], cb);"
         },
         {
-          "label": "URL-encode next_url before redirecting",
-          "diff": "-    return redirect(next_url)\n+    return redirect(quote(next_url))",
-          "whyWrong": "Encoding corrupts a legitimate path and still can't confirm the destination is your site."
+          "label": "Remove quotes and semicolons from orderId",
+          "diff": "+  orderId = String(orderId).replace(/['\";]/g, \"\");",
+          "whyWrong": "UNION-based and comment-based payloads need neither quotes nor semicolons."
         },
         {
-          "label": "Check that next_url contains your domain name",
-          "diff": "+    if \"mysite.com\" not in next_url: next_url = \"/\"",
-          "whyWrong": "`https://evil.com/?x=mysite.com` contains it; substring checks are trivially bypassed."
+          "label": "Cast orderId with String()",
+          "diff": "+  orderId = String(orderId);",
+          "whyWrong": "It's already text; casting changes nothing about how the database parses it."
         }
       ]
     }
@@ -81,24 +81,24 @@
     "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "Send a victim `https://trusted/login?next=https://evil.example/` (or `next=//evil.example`). They log in on the real site and are redirected to an attacker page — often a convincing 'session expired, log in again' clone that harvests the credentials they just used.",
+    "exploit": "Call with `orderId = \"0 OR 1=1\"` to return every order, or `0 UNION SELECT username, password, 1, 1 FROM users` to read other tables. No quotes are even required because the id sits in a numeric context.",
     "concepts": [
-      "CWE-601",
-      "OWASP A01:2021"
+      "CWE-89",
+      "OWASP A03:2021"
     ],
     "hints": {
-      "line": "Where does user input choose where the browser goes?",
-      "bugClass": "The redirect destination is user-controlled.",
-      "why": "Who benefits from an off-site bounce on your trusted domain?",
-      "fix": "Permit only destinations within your own site."
+      "line": "Where does the id become part of the query text?",
+      "bugClass": "The sink is a SQL query.",
+      "why": "Numeric context still lets the input change the query — how?",
+      "fix": "Bind the value with a `?` placeholder."
     }
   },
   "writeup": {
-    "summary": "`redirect(next_url)` sends the browser wherever `next` points, including off-site. On a trusted domain this powers phishing: the victim trusts the first URL and lands on an attacker's clone. Restrict to local paths — parse the value and require an empty scheme and netloc (or use the framework's safe-URL helper). Blocklisting `http` misses protocol-relative and backslash forms.",
+    "summary": "The template literal splices `orderId` into the SQL string, so the database parses attacker input as query syntax — and numeric contexts need no quotes to exploit (`0 OR 1=1`, `UNION SELECT ...`). A parameterized query (`pool.query(\"... id = ?\", [orderId])`) sends the value as data the driver never treats as SQL. Quoting and character stripping are both bypassable.",
     "readNext": [
       {
-        "label": "OWASP Unvalidated Redirects and Forwards",
-        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"
+        "label": "node-mysql2 prepared statements",
+        "url": "https://github.com/sidorares/node-mysql2#using-prepared-statements"
       }
     ]
   }

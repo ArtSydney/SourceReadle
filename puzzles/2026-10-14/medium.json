@@ -1,53 +1,55 @@
 {
-  "id": "srd-0014",
+  "id": "srd-0017",
   "date": "2026-10-14",
   "difficulty": "medium",
-  "language": "python",
+  "language": "java",
   "estimatedMinutes": 15,
   "snippet": {
     "files": [
       {
-        "name": "cache.py",
-        "code": "import pickle\nimport base64\nfrom flask import request\n\ndef load_state():\n    # Restore the view state the client sent back.\n    blob = request.cookies.get(\"state\")\n    raw = base64.b64decode(blob)\n    return pickle.loads(raw)",
+        "name": "FileController.java",
+        "code": "import java.nio.file.*;\n\n@GetMapping(\"/files\")\npublic ResponseEntity<byte[]> get(@RequestParam String name) throws IOException {\n    Path base = Paths.get(\"/var/data/files\");\n    Path target = base.resolve(name);\n    byte[] body = Files.readAllBytes(target);\n    return ResponseEntity.ok(body);\n}",
         "notes": {
-          "7": "Reads the `state` cookie from the request — attacker-controlled.",
-          "8": "Base64-decodes it into raw bytes.",
-          "9": "Reconstructs a Python object from those bytes with pickle."
+          "4": "Handler taking a `name` request parameter — attacker-controlled.",
+          "5": "The directory files are supposed to come from.",
+          "6": "Resolves `name` against the base directory to form the target path.",
+          "7": "Reads the entire file at that path.",
+          "8": "Returns its bytes to the client."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "cache.py",
-      "line": 9,
-      "yellowRadius": 1,
+      "file": "FileController.java",
+      "line": 6,
+      "yellowRadius": 2,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "insecure-deser",
+      "answer": "path-traversal",
       "options": [
-        "insecure-deser",
-        "code-inj",
-        "xxe",
-        "sqli",
+        "path-traversal",
+        "zip-slip",
         "idor",
-        "ssrf"
+        "ssrf",
+        "xxe",
+        "missing-authz"
       ]
     },
     "why": {
       "answerIndex": 0,
       "options": [
         {
-          "label": "`pickle.loads` invokes the object's `__reduce__` during unpickling, so a crafted cookie runs arbitrary code as it is loaded"
+          "label": "`base.resolve(name)` with `../` segments — or an absolute `name`, which replaces the base entirely — produces a path outside `base`, which is then read"
         },
         {
-          "label": "Base64 decoding can raise on malformed input, crashing the handler",
-          "whyWrong": "A decode error is a trivial robustness issue, not the code-execution primitive."
+          "label": "`readAllBytes` loads the whole file into memory, risking exhaustion",
+          "whyWrong": "A large-file DoS is a different concern; the flaw is reading a file outside the intended directory."
         },
         {
-          "label": "Cookies can be read by JavaScript, exposing the state",
-          "whyWrong": "Cookie confidentiality is unrelated to the server executing the payload."
+          "label": "`@RequestParam` without `required=false` throws when absent",
+          "whyWrong": "Parameter presence is unrelated to the traversal."
         }
       ]
     },
@@ -55,18 +57,18 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Wrap pickle.loads in try/except and return {} on error",
-          "diff": "-    return pickle.loads(raw)\n+    try: return pickle.loads(raw)\n+    except Exception: return {}",
-          "whyWrong": "`__reduce__` executes during unpickling and can finish without raising; catching errors doesn't prevent the code from running."
+          "label": "Reject name if it contains '..'",
+          "diff": "+    if (name.contains(\"..\")) throw new AccessDeniedException(name);\n     Path target = base.resolve(name);",
+          "whyWrong": "Misses absolute paths and encoded forms; blocklisting is fragile."
         },
         {
-          "label": "Deserialize with json.loads instead of pickle",
-          "diff": "-    raw = base64.b64decode(blob)\n-    return pickle.loads(raw)\n+    import json\n+    return json.loads(base64.b64decode(blob))"
+          "label": "Normalize the resolved path and confirm it stays under base",
+          "diff": "-    Path target = base.resolve(name);\n+    Path target = base.resolve(name).normalize();\n+    if (!target.startsWith(base)) throw new AccessDeniedException(name);"
         },
         {
-          "label": "Check that the result is a dict after loading",
-          "diff": "-    return pickle.loads(raw)\n+    obj = pickle.loads(raw)\n+    assert isinstance(obj, dict)\n+    return obj",
-          "whyWrong": "The type check runs after unpickling, by which point the payload has already executed."
+          "label": "Catch IOException and return 404",
+          "diff": "+    try {\n     byte[] body = Files.readAllBytes(target);\n+    } catch (IOException e) { return ResponseEntity.notFound().build(); }",
+          "whyWrong": "Error handling doesn't confine the path; an existing file outside base is still served."
         }
       ]
     }
@@ -77,28 +79,28 @@
     "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "Build a payload object whose `__reduce__` returns `(os.system, (\"id\",))`, pickle it, base64-encode it, and send it as the `state` cookie. When `pickle.loads` runs, it calls `os.system(\"id\")` — remote code execution from an unauthenticated cookie.",
+    "exploit": "Request `?name=../../../../etc/passwd` to climb out of `/var/data/files`, or `?name=/etc/passwd` — Java's `resolve` of an absolute path discards the base. Either reads an arbitrary file.",
     "concepts": [
-      "CWE-502",
-      "OWASP A08:2021"
+      "CWE-22",
+      "OWASP A01:2021"
     ],
     "hints": {
-      "line": "The sink turns attacker bytes back into a live object.",
-      "bugClass": "Untrusted bytes become executable objects.",
-      "why": "What does pickle call while rebuilding an object?",
-      "fix": "Use a data-only format like JSON for untrusted input."
+      "line": "Where does user input join a filesystem path?",
+      "bugClass": "Input steers which path is read.",
+      "why": "What does resolve() do with `..` or an absolute path?",
+      "fix": "Normalize and verify the result is still under base."
     }
   },
   "writeup": {
-    "summary": "`pickle.loads` reconstructs arbitrary Python objects and calls their `__reduce__` hooks during unpickling, so untrusted pickle data is effectively code. A crafted `state` cookie runs any command as it is loaded — before any later validation. Use `json.loads` (or another data-only format) for client-supplied data; pickle should only ever touch data you produced and protected.",
+    "summary": "`base.resolve(name)` trusts `name`: `../` segments climb out of the base directory, and an absolute `name` makes `resolve` return that absolute path outright, discarding the base. `readAllBytes` then returns any file the process can read. The fix normalizes the resolved path and checks `startsWith(base)` before reading, so anything that escapes is rejected.",
     "readNext": [
       {
-        "label": "Python pickle — security warning",
-        "url": "https://docs.python.org/3/library/pickle.html#module-pickle"
+        "label": "Java Path.resolve / normalize",
+        "url": "https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Path.html"
       },
       {
-        "label": "OWASP Deserialization Cheat Sheet",
-        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html"
+        "label": "OWASP Path Traversal",
+        "url": "https://owasp.org/www-community/attacks/Path_Traversal"
       }
     ]
   }

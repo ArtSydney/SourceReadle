@@ -1,54 +1,56 @@
 {
-  "id": "srd-0039",
+  "id": "srd-0042",
   "date": "2026-10-22",
   "difficulty": "hard",
-  "language": "java",
+  "language": "c",
   "estimatedMinutes": 30,
   "snippet": {
     "files": [
       {
-        "name": "TokenEndpoint.java",
-        "code": "import java.io.*;\n\n// Rebuild a session token the client posted back to us.\npublic Object handle(InputStream body) throws Exception {\n    ObjectInputStream ois = new ObjectInputStream(body);\n    Object token = ois.readObject();   // reconstructs whatever the stream names\n    return process(token);\n}",
+        "name": "recv_msg.c",
+        "code": "/* Read a length-prefixed message off the socket into a fixed buffer. */\nchar buf[1024];\nint len = read_int(sock);            /* length taken from the network */\nif (len > (int)sizeof(buf)) {\n    return -1;                       /* too big: reject */\n}\nmemcpy(buf, payload, len);           /* len is converted to size_t here */",
         "notes": {
-          "4": "Handles a request whose body is a serialized Java object.",
-          "5": "Wraps the request body in an ObjectInputStream.",
-          "6": "Reconstructs an object graph from the bytes — instantiating whatever classes the stream specifies.",
-          "7": "Passes the result on for processing."
+          "2": "A fixed 1024-byte destination buffer.",
+          "3": "Reads a signed 32-bit length from the network — attacker-controlled.",
+          "4": "Rejects lengths larger than the buffer...",
+          "5": "...by returning an error.",
+          "7": "Copies `len` bytes; memcpy's third argument is `size_t` (unsigned)."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "TokenEndpoint.java",
-      "line": 6,
-      "yellowRadius": 1,
+      "file": "recv_msg.c",
+      "line": 4,
+      "yellowRadius": 3,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "insecure-deser",
+      "answer": "sign-confusion",
       "options": [
-        "insecure-deser",
-        "code-inj",
-        "xxe",
-        "sqli",
-        "ssrf",
-        "idor"
+        "sign-confusion",
+        "int-overflow",
+        "buffer-overflow",
+        "oob-read",
+        "use-after-free",
+        "null-deref",
+        "format-string"
       ]
     },
     "why": {
-      "answerIndex": 0,
+      "answerIndex": 1,
       "options": [
         {
-          "label": "`readObject` reconstructs arbitrary serializable classes and runs their callbacks (readObject/readResolve/finalize), so a crafted stream drives a gadget chain of classes on the classpath to execute code"
+          "label": "`read_int` can fail and leave `len` holding a stale value",
+          "whyWrong": "Not the issue; the flaw is the signedness of the bounds check."
         },
         {
-          "label": "`readObject` blocks until the whole body arrives, enabling a slow-read DoS",
-          "whyWrong": "A DoS is minor next to the remote code execution this allows."
+          "label": "`len` is signed, so a negative value passes `len > sizeof(buf)`, and then memcpy reinterprets it as a huge `size_t`, copying far past `buf`"
         },
         {
-          "label": "Casting `token` to a concrete type later may throw ClassCastException",
-          "whyWrong": "By the time any cast runs, the gadget has already executed during readObject."
+          "label": "`sizeof(buf)` is 1024 but `buf` could be smaller elsewhere",
+          "whyWrong": "`sizeof` is exact for this array; the gap is the missing lower bound, not the size constant."
         }
       ]
     },
@@ -56,18 +58,18 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Wrap readObject in try/catch and return null on error",
-          "diff": "+    try {\n     Object token = ois.readObject();\n+    } catch (Exception e) { return null; }",
-          "whyWrong": "The gadget executes during readObject; catching the exception afterward doesn't prevent it."
+          "label": "Cast len to unsigned in the memcpy call",
+          "diff": "-    memcpy(buf, payload, len);\n+    memcpy(buf, payload, (size_t)len);",
+          "whyWrong": "That forces a negative value to a huge size_t — exactly the overflow you're trying to prevent."
         },
         {
-          "label": "Don't deserialize untrusted input — use a data format (e.g. JSON) or enforce a strict class allowlist via ObjectInputFilter",
-          "diff": "-    ObjectInputStream ois = new ObjectInputStream(body);\n-    Object token = ois.readObject();\n+    Token token = jsonMapper.readValue(body, Token.class); // data-only; no arbitrary classes"
+          "label": "Use an unsigned length and check both bounds before copying",
+          "diff": "-    int len = read_int(sock);\n-    if (len > (int)sizeof(buf)) {\n+    int raw = read_int(sock);\n+    if (raw < 0 || (size_t)raw > sizeof(buf)) {\n         return -1;\n     }\n+    size_t len = (size_t)raw;"
         },
         {
-          "label": "Run the handler under a restricted OS user",
-          "diff": "# deploy as an unprivileged user",
-          "whyWrong": "Dropping privileges limits blast radius but still allows code execution as that user; the deserialization sink is unchanged."
+          "label": "Increase buf to 4096 bytes",
+          "diff": "-char buf[1024];\n+char buf[4096];",
+          "whyWrong": "A bigger buffer doesn't stop a negative-turned-huge length from overflowing it."
         }
       ]
     }
@@ -75,31 +77,27 @@
   "source": {
     "origin": "original",
     "license": "CC0-1.0",
-    "attribution": "SourceReadle original (Java ObjectInputStream deserialization; ysoserial / FoxGlove 2015 research)"
+    "attribution": "SourceReadle original (signed/unsigned confusion)"
   },
   "training": {
-    "exploit": "If a library with a known gadget chain (e.g. Apache Commons Collections) is on the classpath, generate a payload with a tool like ysoserial and POST it as the request body. When `readObject` deserializes it, the chain's callbacks run and execute an attacker command — unauthenticated remote code execution, no valid token required.",
+    "exploit": "Send a length of `-1` (0xFFFFFFFF on the wire). The signed check `-1 > 1024` is false, so it passes, then `memcpy(buf, payload, len)` converts `-1` to `SIZE_MAX` and attempts to copy ~4 GB into the 1024-byte stack buffer — a massive overflow. A carefully chosen negative value lets the attacker control how much is written past `buf`, overwriting the saved return address.",
     "concepts": [
-      "CWE-502",
-      "OWASP A08:2021"
+      "CWE-195",
+      "CWE-787"
     ],
     "hints": {
-      "line": "The sink turns posted bytes into live Java objects.",
-      "bugClass": "Untrusted bytes become arbitrary objects.",
-      "why": "What runs while Java reconstructs a serialized object graph?",
-      "fix": "Don't native-deserialize untrusted input; use data-only parsing."
+      "line": "The guard compares a signed value; what does it miss?",
+      "bugClass": "A signed value is treated as unsigned.",
+      "why": "Is `-1 > 1024`? And what is `(size_t)(-1)`?",
+      "fix": "Use an unsigned length and check it isn't negative or too large."
     }
   },
   "writeup": {
-    "summary": "`ObjectInputStream.readObject` reconstructs whatever classes the byte stream names and invokes their serialization callbacks, so an attacker who can POST bytes drives a 'gadget chain' of classes already on the classpath (famously Apache Commons Collections) to execute code — before any application logic runs. The robust fix is to not native-deserialize untrusted input at all: use a data-only format like JSON, or, if Java serialization is unavoidable, install a strict `ObjectInputFilter` allowlist. Try/catch and privilege-dropping don't stop the gadget from firing.",
+    "summary": "`len` is a signed `int`, and the only check is an upper bound (`len > sizeof(buf)`). A negative length passes that check, but memcpy's third parameter is `size_t`, so the negative value is reinterpreted as an enormous unsigned number and memcpy copies far past the 1024-byte buffer — a stack overflow the attacker steers by choosing the negative value. The fix treats the length as unsigned and validates both bounds (`raw < 0` and `> sizeof(buf)`) before copying. Casting to unsigned in the memcpy only cements the bug.",
     "readNext": [
       {
-        "label": "OWASP Deserialization Cheat Sheet (Java)",
-        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html#java"
-      },
-      {
-        "label": "Java ObjectInputFilter (JEP 290)",
-        "url": "https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/ObjectInputFilter.html"
+        "label": "CWE-195: Signed to Unsigned Conversion Error",
+        "url": "https://cwe.mitre.org/data/definitions/195.html"
       }
     ]
   }

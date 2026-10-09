@@ -1,55 +1,53 @@
 {
-  "id": "srd-0011",
+  "id": "srd-0014",
   "date": "2026-10-13",
   "difficulty": "medium",
-  "language": "go",
+  "language": "python",
   "estimatedMinutes": 15,
   "snippet": {
     "files": [
       {
-        "name": "proxy.go",
-        "code": "package main\n\nimport (\n\t\"io\"\n\t\"net/http\"\n)\n\n// Fetch a URL on behalf of the user and return its body (a link preview).\nfunc preview(w http.ResponseWriter, r *http.Request) {\n\ttarget := r.URL.Query().Get(\"url\")\n\tresp, err := http.Get(target)\n\tif err != nil {\n\t\thttp.Error(w, err.Error(), 502)\n\t\treturn\n\t}\n\tdefer resp.Body.Close()\n\tio.Copy(w, resp.Body)\n}",
+        "name": "cache.py",
+        "code": "import pickle\nimport base64\nfrom flask import request\n\ndef load_state():\n    # Restore the view state the client sent back.\n    blob = request.cookies.get(\"state\")\n    raw = base64.b64decode(blob)\n    return pickle.loads(raw)",
         "notes": {
-          "9": "Handler that builds a link preview for a URL the user supplies.",
-          "10": "Reads the `url` query parameter — attacker-controlled.",
-          "11": "Makes the server itself perform an HTTP GET to that URL.",
-          "16": "Ensures the response body is closed afterward.",
-          "17": "Streams the fetched body back to the user."
+          "7": "Reads the `state` cookie from the request — attacker-controlled.",
+          "8": "Base64-decodes it into raw bytes.",
+          "9": "Reconstructs a Python object from those bytes with pickle."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "proxy.go",
-      "line": 11,
-      "yellowRadius": 2,
+      "file": "cache.py",
+      "line": 9,
+      "yellowRadius": 1,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "ssrf",
+      "answer": "insecure-deser",
       "options": [
-        "ssrf",
-        "open-redirect",
-        "path-traversal",
-        "command-inj",
+        "insecure-deser",
+        "code-inj",
+        "xxe",
+        "sqli",
         "idor",
-        "xxe"
+        "ssrf"
       ]
     },
     "why": {
-      "answerIndex": 1,
+      "answerIndex": 0,
       "options": [
         {
-          "label": "`http.Get` follows redirects, which can be slow",
-          "whyWrong": "Latency isn't the issue; the request reaching internal hosts is."
+          "label": "`pickle.loads` invokes the object's `__reduce__` during unpickling, so a crafted cookie runs arbitrary code as it is loaded"
         },
         {
-          "label": "`target` is user-controlled and the request is made by the server, so it can reach internal-only addresses the client never could (e.g. 169.254.169.254, localhost)"
+          "label": "Base64 decoding can raise on malformed input, crashing the handler",
+          "whyWrong": "A decode error is a trivial robustness issue, not the code-execution primitive."
         },
         {
-          "label": "`io.Copy` streams unbounded data, risking memory exhaustion",
-          "whyWrong": "That's a possible DoS, not why this is an SSRF; the core problem is the destination is attacker-chosen."
+          "label": "Cookies can be read by JavaScript, exposing the state",
+          "whyWrong": "Cookie confidentiality is unrelated to the server executing the payload."
         }
       ]
     },
@@ -57,23 +55,18 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Reject URLs containing 'localhost'",
-          "diff": "+\tif strings.Contains(target, \"localhost\") { http.Error(w, \"blocked\", 400); return }\n \tresp, err := http.Get(target)",
-          "whyWrong": "Trivially bypassed with an IP, an alternate representation, or DNS rebinding."
+          "label": "Wrap pickle.loads in try/except and return {} on error",
+          "diff": "-    return pickle.loads(raw)\n+    try: return pickle.loads(raw)\n+    except Exception: return {}",
+          "whyWrong": "`__reduce__` executes during unpickling and can finish without raising; catching errors doesn't prevent the code from running."
         },
         {
-          "label": "Allow only http/https, resolve the host, and reject private/loopback/link-local ranges (re-checking after redirects)",
-          "diff": "-\tresp, err := http.Get(target)\n+\tif err := validatePublicURL(target); err != nil { http.Error(w, \"blocked\", 400); return }\n+\tresp, err := safeClient.Get(target) // no-redirect client that re-validates each hop"
+          "label": "Deserialize with json.loads instead of pickle",
+          "diff": "-    raw = base64.b64decode(blob)\n-    return pickle.loads(raw)\n+    import json\n+    return json.loads(base64.b64decode(blob))"
         },
         {
-          "label": "Set a timeout on the HTTP client",
-          "diff": "+\tclient := &http.Client{Timeout: 5 * time.Second}\n-\tresp, err := http.Get(target)\n+\tresp, err := client.Get(target)",
-          "whyWrong": "A timeout limits duration, not destination; internal services still get hit."
-        },
-        {
-          "label": "URL-encode target before the request",
-          "diff": "-\tresp, err := http.Get(target)\n+\tresp, err := http.Get(url.QueryEscape(target))",
-          "whyWrong": "Encoding the whole URL breaks it and does nothing to restrict the host."
+          "label": "Check that the result is a dict after loading",
+          "diff": "-    return pickle.loads(raw)\n+    obj = pickle.loads(raw)\n+    assert isinstance(obj, dict)\n+    return obj",
+          "whyWrong": "The type check runs after unpickling, by which point the payload has already executed."
         }
       ]
     }
@@ -84,24 +77,28 @@
     "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "Request `?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/` on a cloud host to make the server fetch and return its own IAM credentials. Or `?url=http://127.0.0.1:6379/` to reach an internal Redis. The server is the one making the request, so network controls that protect internal services from outsiders don't apply.",
+    "exploit": "Build a payload object whose `__reduce__` returns `(os.system, (\"id\",))`, pickle it, base64-encode it, and send it as the `state` cookie. When `pickle.loads` runs, it calls `os.system(\"id\")` — remote code execution from an unauthenticated cookie.",
     "concepts": [
-      "CWE-918",
-      "OWASP A10:2021"
+      "CWE-502",
+      "OWASP A08:2021"
     ],
     "hints": {
-      "line": "Where does the server make a request to an address it was given?",
-      "bugClass": "The server fetches a destination the user chose.",
-      "why": "What can the server reach that the client cannot?",
-      "fix": "Constrain the destination to public hosts you intend to allow."
+      "line": "The sink turns attacker bytes back into a live object.",
+      "bugClass": "Untrusted bytes become executable objects.",
+      "why": "What does pickle call while rebuilding an object?",
+      "fix": "Use a data-only format like JSON for untrusted input."
     }
   },
   "writeup": {
-    "summary": "`preview` fetches whatever URL the user supplies, from the server's own network position. An attacker points it at cloud metadata endpoints, `localhost`, or internal services to read data and credentials that are firewalled off from the outside — server-side request forgery. The robust fix restricts the scheme, resolves the host, and blocks private/loopback/link-local address ranges, re-validating on every redirect hop. Blocklisting strings like `localhost` is trivially bypassed.",
+    "summary": "`pickle.loads` reconstructs arbitrary Python objects and calls their `__reduce__` hooks during unpickling, so untrusted pickle data is effectively code. A crafted `state` cookie runs any command as it is loaded — before any later validation. Use `json.loads` (or another data-only format) for client-supplied data; pickle should only ever touch data you produced and protected.",
     "readNext": [
       {
-        "label": "OWASP SSRF Prevention Cheat Sheet",
-        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html"
+        "label": "Python pickle — security warning",
+        "url": "https://docs.python.org/3/library/pickle.html#module-pickle"
+      },
+      {
+        "label": "OWASP Deserialization Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html"
       }
     ]
   }

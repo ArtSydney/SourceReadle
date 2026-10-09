@@ -1,5 +1,5 @@
 {
-  "id": "srd-0033",
+  "id": "srd-0036",
   "date": "2026-10-20",
   "difficulty": "hard",
   "language": "c",
@@ -7,48 +7,50 @@
   "snippet": {
     "files": [
       {
-        "name": "cgi_main.c",
-        "code": "/* Simplified from php-cgi query-string handling, pre-patch (CVE-2012-1823). */\n/* If the query string has no unencoded '=', treat it as CLI arguments. */\nif (query_string != NULL && strchr(query_string, '=') == NULL) {\n    decoded = url_decode(query_string);\n    php_build_argv(decoded, &argc, &argv);   /* e.g. \"-d\", \"auto_prepend_file=...\" */\n    cgi_handle_args(argc, argv);             /* php interprets -d / -s / -r flags */\n}",
+        "name": "image.c",
+        "code": "/* Read a raw image from a packet: width x height pixels, 4 bytes each. */\nuint32_t w = read_u32(pkt);               /* attacker-controlled */\nuint32_t h = read_u32(pkt);               /* attacker-controlled */\nuint32_t *pixels = malloc(w * h * 4);     /* allocation size */\nfor (uint32_t i = 0; i < w * h; i++)\n    pixels[i] = read_u32(pkt);",
         "notes": {
-          "3": "If a query string is present and contains no `=`, enter this block.",
-          "4": "URL-decodes the query string.",
-          "5": "Splits it into argc/argv as if they were command-line arguments.",
-          "6": "Hands those to PHP's CLI argument handler, which honors flags like -d, -s, -r."
+          "2": "Reads a 32-bit width from the packet — attacker-controlled.",
+          "3": "Reads a 32-bit height — attacker-controlled.",
+          "4": "Allocates `w * h * 4` bytes. The multiplication is done in 32-bit unsigned.",
+          "5": "Loops `w * h` times...",
+          "6": "...writing one 4-byte pixel per iteration."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "cgi_main.c",
-      "line": 3,
-      "yellowRadius": 3,
+      "file": "image.c",
+      "line": 4,
+      "yellowRadius": 2,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "code-inj",
+      "answer": "int-overflow",
       "options": [
-        "code-inj",
-        "command-inj",
-        "path-traversal",
-        "insecure-deser",
-        "ssrf",
+        "int-overflow",
+        "buffer-overflow",
+        "oob-read",
+        "sign-confusion",
+        "use-after-free",
+        "null-deref",
         "format-string"
       ]
     },
     "why": {
-      "answerIndex": 1,
+      "answerIndex": 2,
       "options": [
         {
-          "label": "`url_decode` can overflow for a very long query string",
-          "whyWrong": "No overflow is implied here; the flaw is forwarding the query string to the CLI parser."
+          "label": "`malloc` is not checked for NULL before use",
+          "whyWrong": "A missing NULL check is a separate, lesser issue; the exploited bug is that the buffer is far too small for the writes."
         },
         {
-          "label": "A query string with no `=` is handed to PHP's CLI argument parser, so an attacker passes flags like `-d auto_prepend_file=php://input` to execute arbitrary PHP"
+          "label": "`read_u32` might read past the end of the packet",
+          "whyWrong": "That's an input-length concern; the heap overflow here comes from the size miscalculation, not the read."
         },
         {
-          "label": "`strchr` returns NULL for an empty string, skipping the block",
-          "whyWrong": "An edge case in the check, not the remote-code-execution mechanism."
+          "label": "`w * h * 4` is computed in 32-bit unsigned and can wrap to a small value, so `malloc` under-allocates while the loop still writes `w * h` pixels — overflowing the buffer"
         }
       ]
     },
@@ -56,53 +58,46 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Reject query strings that begin with '-'",
-          "diff": "+    if (query_string[0] == '-') return;\n     if (query_string != NULL && strchr(...) == NULL) {",
-          "whyWrong": "Arguments can be reordered or separated so a flag isn't first; the CLI parser is still reachable."
+          "label": "Cast the size to int before calling malloc",
+          "diff": "-uint32_t *pixels = malloc(w * h * 4);\n+uint32_t *pixels = malloc((int)(w * h * 4));",
+          "whyWrong": "A signed 32-bit cast adds no range and can go negative; the multiplication has already wrapped."
         },
         {
-          "label": "Do not pass HTTP query strings to the CLI argument parser when running as CGI/FastCGI",
-          "diff": "-if (query_string != NULL && strchr(query_string, '=') == NULL) {\n-    decoded = url_decode(query_string);\n-    php_build_argv(decoded, &argc, &argv);\n-    cgi_handle_args(argc, argv);\n-}\n+/* In CGI/FastCGI mode, never interpret the query string as CLI args. */\n+if (!cgi_sapi) {\n+    /* argv handling only for the real command line */\n+}"
+          "label": "Compute the size in 64-bit and reject dimensions whose product overflows or exceeds a sane limit",
+          "diff": "-uint32_t *pixels = malloc(w * h * 4);\n+uint64_t bytes = (uint64_t)w * h * 4;\n+if (w == 0 || h == 0 || bytes > MAX_IMAGE_BYTES)\n+    return -1;\n+uint32_t *pixels = malloc((size_t)bytes);"
         },
         {
-          "label": "Block the substring 'auto_prepend_file' in the query string",
-          "diff": "+    if (strstr(query_string, \"auto_prepend_file\")) return;",
-          "whyWrong": "Other flags (-r to run code, -s to leak source, -d with different settings) still achieve execution or disclosure."
+          "label": "Allocate w * h * 4 + 1 bytes",
+          "diff": "-uint32_t *pixels = malloc(w * h * 4);\n+uint32_t *pixels = malloc(w * h * 4 + 1);",
+          "whyWrong": "A one-byte pad does nothing against a multiplicative wrap of gigabytes down to a few bytes."
         }
       ]
     }
   },
   "source": {
-    "origin": "cve",
-    "cve": "CVE-2012-1823",
-    "project": "PHP (php-cgi)",
-    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2012-1823",
-    "license": "PHP-3.01",
-    "attribution": "PHP php-cgi, CVE-2012-1823, simplified"
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original (integer overflow to heap overflow)"
   },
   "training": {
-    "exploit": "Request `/index.php?-d+allow_url_include%3d1+-d+auto_prepend_file%3dphp://input` with a POST body of `<?php system('id'); ?>`. Because the query string has no decoded `=`, php-cgi treats it as CLI flags, prepends the request body as a PHP file, and executes it — unauthenticated RCE. `?-s` alone discloses the script's source.",
+    "exploit": "Send `w = 0x40000001`, `h = 1`. The loop runs `w * h` ≈ 1,073,741,825 times, but `w * h * 4` wraps around 2^32 to just `4`, so `malloc` returns a 4-byte buffer. The loop then writes ~1 billion attacker-controlled 4-byte values far past it, smashing the heap — reliable memory corruption that can be steered to code execution.",
     "concepts": [
-      "CWE-94",
-      "CVE-2012-1823"
+      "CWE-190",
+      "CWE-787"
     ],
     "hints": {
-      "line": "The fateful decision is whether to treat the query string as CLI args.",
-      "bugClass": "Attacker input becomes interpreter flags that run code.",
-      "why": "What do PHP flags like -d/-r let you do?",
-      "fix": "In CGI mode, never route the query string to the argv parser."
+      "line": "The bug is in the size arithmetic, not the loop body.",
+      "bugClass": "A computed value wraps past its type's range.",
+      "why": "What does `w * h * 4` become in 32-bit when the true product exceeds 2^32?",
+      "fix": "Do the math in 64-bit and bound it before allocating."
     }
   },
   "writeup": {
-    "summary": "php-cgi treated a query string with no decoded `=` as command-line arguments and passed it to PHP's CLI flag parser. An attacker supplies `-d`/`-r`/`-s` flags — classically `-d auto_prepend_file=php://input` plus a PHP body in the POST — to execute arbitrary code, or `-s` to disclose source. The correct fix is to never interpret HTTP query strings as CLI arguments when running as CGI/FastCGI; blocklisting specific flags or leading dashes leaves other flags reachable.",
+    "summary": "`w * h * 4` is evaluated in 32-bit unsigned arithmetic, so large dimensions wrap the product down to a tiny number; `malloc` then returns a buffer far smaller than the `w * h` pixels the loop writes, producing a heap buffer overflow with attacker-controlled contents. The fix computes the size in 64-bit, rejects zero and anything whose product overflows or exceeds a sane cap, and only then allocates. Casting or padding doesn't address the wrap.",
     "readNext": [
       {
-        "label": "CVE-2012-1823 (NVD)",
-        "url": "https://nvd.nist.gov/vuln/detail/CVE-2012-1823"
-      },
-      {
-        "label": "PHP bug #61910",
-        "url": "https://bugs.php.net/bug.php?id=61910"
+        "label": "CWE-190: Integer Overflow or Wraparound",
+        "url": "https://cwe.mitre.org/data/definitions/190.html"
       }
     ]
   }

@@ -1,0 +1,115 @@
+{
+  "id": "srd-0002",
+  "date": "2026-10-09",
+  "difficulty": "medium",
+  "language": "csharp",
+  "estimatedMinutes": 15,
+  "snippet": {
+    "files": [
+      {
+        "name": "ArchiveExtractor.cs",
+        "code": "using System.IO;\nusing System.IO.Compression;\n\npublic class ArchiveExtractor\n{\n    // Extracts an uploaded .zip into a per-user directory.\n    public void Extract(string zipPath, string destinationDir)\n    {\n        Directory.CreateDirectory(destinationDir);\n        using var archive = ZipFile.OpenRead(zipPath);\n        foreach (var entry in archive.Entries)\n        {\n            if (string.IsNullOrEmpty(entry.Name))\n                continue; // skip directory entries\n\n            var target = Path.Combine(destinationDir, entry.FullName);\n            var dir = Path.GetDirectoryName(target);\n            if (dir != null)\n                Directory.CreateDirectory(dir);\n\n            entry.ExtractToFile(target, overwrite: true);\n        }\n    }\n}\n",
+        "notes": {
+          "9": "Creates the per-user output directory.",
+          "10": "Opens the uploaded zip for reading.",
+          "11": "Loops over every entry (file) inside the archive.",
+          "13": "Skips entries that are directories rather than files.",
+          "16": "Builds the output path by joining the destination with the entry's name, which comes from inside the zip.",
+          "17": "Gets the parent folder of that output path.",
+          "19": "Creates any intermediate subdirectories.",
+          "21": "Writes the entry's bytes to the computed path, overwriting any existing file."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "ArchiveExtractor.cs",
+      "line": 17,
+      "yellowRadius": 3,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "zip-slip",
+      "options": [
+        "zip-slip",
+        "path-traversal",
+        "ssrf",
+        "insecure-deser",
+        "idor",
+        "toctou"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "`ExtractToFile` with overwrite:true can clobber the user's own earlier files",
+          "whyWrong": "Overwriting within the destination is a minor concern; the real danger is writing OUTSIDE the destination entirely."
+        },
+        {
+          "label": "`entry.FullName` is attacker-controlled, so the joined path can resolve outside `destinationDir`"
+        },
+        {
+          "label": "`ZipFile.OpenRead` loads the whole archive into memory, enabling a denial of service",
+          "whyWrong": "Memory use is unrelated. The flaw is where the files are written, not how the archive is read."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "Strip '..' from each entry name",
+          "diff": "-            var target = Path.Combine(destinationDir, entry.FullName);\n+            var clean = entry.FullName.Replace(\"..\", \"\");\n+            var target = Path.Combine(destinationDir, clean);",
+          "whyWrong": "Naive string stripping is bypassable (e.g. '....//' collapses back to '../') and mishandles absolute paths and alternate separators."
+        },
+        {
+          "label": "Reject entries whose name contains a slash",
+          "diff": "+            if (entry.FullName.Contains('/') || entry.FullName.Contains('\\\\'))\n+                continue;\n            var target = Path.Combine(destinationDir, entry.FullName);",
+          "whyWrong": "This breaks legitimate archives with subfolders and still trusts Path.Combine with an attacker-controlled leaf; it does not verify the resolved path stays inside the destination."
+        },
+        {
+          "label": "Resolve the full path and verify it stays under the destination",
+          "diff": "-            var target = Path.Combine(destinationDir, entry.FullName);\n+            var destFull = Path.GetFullPath(destinationDir + Path.DirectorySeparatorChar);\n+            var target = Path.GetFullPath(Path.Combine(destFull, entry.FullName));\n+            if (!target.StartsWith(destFull, StringComparison.Ordinal))\n+                throw new IOException($\"Blocked path traversal: {entry.FullName}\");"
+        },
+        {
+          "label": "Extract to a temp file first, then move it",
+          "diff": "-            entry.ExtractToFile(target, overwrite: true);\n+            var tmp = Path.GetTempFileName();\n+            entry.ExtractToFile(tmp, overwrite: true);\n+            File.Move(tmp, target, overwrite: true);",
+          "whyWrong": "The final destination is still `target`, computed from the unchecked entry name. Staging through a temp file changes nothing about where the data lands."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original (Zip Slip pattern, per Snyk 2018 research)"
+  },
+  "training": {
+    "exploit": "Craft a zip containing an entry named `../../../../etc/cron.d/pwn` (or an absolute path). When extracted, `Path.Combine(dest, \"../../../../etc/cron.d/pwn\")` resolves outside the per-user directory, so `ExtractToFile` drops an attacker-controlled file into a system location — here, a cron job that runs their command.",
+    "concepts": [
+      "CWE-22",
+      "Zip Slip"
+    ],
+    "hints": {
+      "line": "The dangerous step is where a name from the archive becomes a filesystem path.",
+      "bugClass": "It's a traversal — specifically the archive-extraction variant.",
+      "why": "Who controls `entry.FullName`, and where can `..` take the path?",
+      "fix": "Canonicalize the final path and prove it's still inside the destination."
+    }
+  },
+  "writeup": {
+    "summary": "`entry.FullName` comes from inside the zip and can be `../../etc/cron.d/evil` or an absolute path. `Path.Combine` happily returns a path outside `destinationDir` when the second argument climbs out (and discards the base entirely if the entry is absolute), so `ExtractToFile` writes attacker-chosen files anywhere the process can reach. This is the Zip Slip class. The correct fix canonicalizes the target with `Path.GetFullPath` and confirms it is still prefixed by the destination before writing; everything else either breaks valid archives or filters symptoms rather than validating the resolved path.",
+    "readNext": [
+      {
+        "label": "Snyk: Zip Slip vulnerability",
+        "url": "https://security.snyk.io/research/zip-slip-vulnerability"
+      },
+      {
+        "label": "OWASP Path Traversal",
+        "url": "https://owasp.org/www-community/attacks/Path_Traversal"
+      }
+    ]
+  }
+}

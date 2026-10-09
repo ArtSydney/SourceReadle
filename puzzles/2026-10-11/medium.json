@@ -1,5 +1,5 @@
 {
-  "id": "srd-0005",
+  "id": "srd-0008",
   "date": "2026-10-11",
   "difficulty": "medium",
   "language": "csharp",
@@ -7,75 +7,74 @@
   "snippet": {
     "files": [
       {
-        "name": "SessionStore.cs",
-        "code": "using System.IO;\nusing System.Runtime.Serialization.Formatters.Binary;\n\npublic class SessionStore\n{\n    // Session state is stored in a cookie as base64 of a serialized object.\n    public SessionState Load(string cookieValue)\n    {\n        var bytes = System.Convert.FromBase64String(cookieValue);\n        using var ms = new MemoryStream(bytes);\n        var formatter = new BinaryFormatter();\n        var state = (SessionState)formatter.Deserialize(ms);\n        return state;\n    }\n\n    public string Save(SessionState state)\n    {\n        using var ms = new MemoryStream();\n        new BinaryFormatter().Serialize(ms, state);\n        return System.Convert.ToBase64String(ms.ToArray());\n    }\n}\n",
+        "name": "InvoiceImporter.cs",
+        "code": "using System.Xml;\n\npublic class InvoiceImporter\n{\n    // Parse an invoice XML document uploaded by a partner.\n    public Invoice Parse(string xml)\n    {\n        var doc = new XmlDocument();\n        doc.XmlResolver = new XmlUrlResolver();\n        doc.LoadXml(xml);\n\n        var total = doc.SelectSingleNode(\"/invoice/total\")?.InnerText;\n        var customer = doc.SelectSingleNode(\"/invoice/customer\")?.InnerText;\n        return new Invoice(customer, decimal.Parse(total));\n    }\n}\n",
         "notes": {
-          "9": "Decodes the base64 cookie value into raw bytes.",
-          "10": "Wraps those bytes in a readable stream.",
-          "11": "Creates a BinaryFormatter — a serializer that can reconstruct arbitrary .NET types.",
-          "12": "Reads the stream, rebuilding whatever object graph it describes, then casts the result to SessionState.",
-          "13": "Returns the reconstructed session object.",
-          "19": "Save() serializes a SessionState back into the binary format.",
-          "20": "Returns it base64-encoded for use as a cookie."
+          "8": "Creates an in-memory XML document object.",
+          "9": "Assigns a URL resolver, which tells the parser it may fetch external entities and DTDs.",
+          "10": "Parses the XML text — this is where entities are expanded and any external references resolved.",
+          "12": "Reads the text of the <total> element.",
+          "13": "Reads the text of the <customer> element.",
+          "14": "Builds the Invoice from those values."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "SessionStore.cs",
-      "line": 12,
-      "yellowRadius": 3,
+      "file": "InvoiceImporter.cs",
+      "line": 9,
+      "yellowRadius": 2,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "insecure-deser",
+      "answer": "xxe",
       "options": [
-        "insecure-deser",
         "xxe",
+        "insecure-deser",
+        "ssrf",
+        "path-traversal",
         "code-inj",
-        "idor",
-        "weak-crypto",
         "sqli"
       ]
     },
     "why": {
-      "answerIndex": 2,
+      "answerIndex": 0,
       "options": [
         {
-          "label": "An attacker can edit the base64 to change their own `role` field to admin",
-          "whyWrong": "Field tampering is possible but minor next to the real problem — the payload need not be a SessionState at all."
+          "label": "Assigning an `XmlUrlResolver` makes `LoadXml` resolve external entities, so a declared SYSTEM entity reads local files or hits internal URLs during parsing"
         },
         {
-          "label": "The cast on line 12 throws for an unexpected type, letting an attacker crash the app",
-          "whyWrong": "A crash is the least of it, and the cast runs only AFTER deserialization has already executed attacker code."
+          "label": "`decimal.Parse(total)` throws on non-numeric input, letting an attacker crash the importer",
+          "whyWrong": "A parse exception is a robustness bug, not the disclosure/SSRF primitive the resolver creates."
         },
         {
-          "label": "`Deserialize` instantiates whatever types the stream names and runs their callbacks, so a crafted cookie executes a gadget chain"
+          "label": "The XPath in `SelectSingleNode` is built from input and can be injected",
+          "whyWrong": "The XPath strings here are constant; nothing user-controlled is concatenated into them."
         }
       ]
     },
     "fix": {
-      "answerIndex": 1,
+      "answerIndex": 0,
       "options": [
         {
-          "label": "Validate the object's type after deserializing",
-          "diff": "     var state = (SessionState)formatter.Deserialize(ms);\n+    if (state.GetType() != typeof(SessionState))\n+        throw new InvalidDataException();\n     return state;",
-          "whyWrong": "Too late: BinaryFormatter already instantiated the attacker's gadget chain during Deserialize. The cast/type check runs after code has executed."
+          "label": "Disable the resolver so external entities are not fetched",
+          "diff": "-        doc.XmlResolver = new XmlUrlResolver();\n+        doc.XmlResolver = null;   // no external entity / DTD resolution\n         doc.LoadXml(xml);"
         },
         {
-          "label": "Replace BinaryFormatter with a data-only serializer (e.g. System.Text.Json)",
-          "diff": "-    using var ms = new MemoryStream(bytes);\n-    var formatter = new BinaryFormatter();\n-    var state = (SessionState)formatter.Deserialize(ms);\n-    return state;\n+    return System.Text.Json.JsonSerializer.Deserialize<SessionState>(bytes);"
+          "label": "Validate the XML against a schema after loading",
+          "diff": "         doc.LoadXml(xml);\n+        doc.Schemas.Add(InvoiceSchema);\n+        doc.Validate(null);",
+          "whyWrong": "Entity expansion happens during LoadXml, before validation runs, so external entities are already resolved and any SSRF/file read has occurred."
         },
         {
-          "label": "Encrypt the cookie value",
-          "diff": "-    var bytes = System.Convert.FromBase64String(cookieValue);\n+    var bytes = Decrypt(System.Convert.FromBase64String(cookieValue));",
-          "whyWrong": "Encryption/signing stops tampering by outsiders, but the format is still BinaryFormatter; if a key leaks or the data is ever attacker-influenced, the gadget problem remains. The dangerous sink is the formatter itself."
+          "label": "HTML-encode the parsed values before use",
+          "diff": "-        var customer = doc.SelectSingleNode(\"/invoice/customer\")?.InnerText;\n+        var customer = WebUtility.HtmlEncode(\n+            doc.SelectSingleNode(\"/invoice/customer\")?.InnerText);",
+          "whyWrong": "Output encoding addresses a different problem (XSS). It does nothing about entities resolved during parsing."
         },
         {
-          "label": "Wrap Deserialize in a try/catch and return a default session",
-          "diff": "-    var state = (SessionState)formatter.Deserialize(ms);\n-    return state;\n+    try { return (SessionState)formatter.Deserialize(ms); }\n+    catch { return new SessionState(); }",
-          "whyWrong": "A gadget chain executes its payload during deserialization and may complete without throwing. Catching exceptions does not prevent the code execution."
+          "label": "Wrap parsing in a size limit",
+          "diff": "+        if (xml.Length > 1_000_000) throw new InvalidDataException();\n         doc.LoadXml(xml);",
+          "whyWrong": "A size cap mitigates one DoS variant (billion laughs) but still allows a small document with an external entity to read local files or make server-side requests."
         }
       ]
     }
@@ -83,31 +82,31 @@
   "source": {
     "origin": "original",
     "license": "CC0-1.0",
-    "attribution": "SourceReadle original (BinaryFormatter RCE pattern; see Microsoft BinaryFormatter security guide)"
+    "attribution": "SourceReadle original (classic .NET XXE via XmlUrlResolver)"
   },
   "training": {
-    "exploit": "Use a tool like ysoserial.net to generate a `TypeConfuseDelegate` gadget-chain payload that runs `calc`/`id`, base64-encode it, and send it as the session cookie. When `Load` calls `Deserialize`, the chain fires during object reconstruction and the command runs on the server — remote code execution from an unauthenticated cookie.",
+    "exploit": "Upload an invoice beginning with `<!DOCTYPE invoice [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>` and put `&x;` inside `<customer>`. During `LoadXml`, the parser reads the file and the customer value becomes its contents — which the app then stores or echoes. Swap in `SYSTEM \"http://169.254.169.254/latest/meta-data/\"` to pivot into server-side request forgery against internal services.",
     "concepts": [
-      "CWE-502",
-      "OWASP A08:2021"
+      "CWE-611",
+      "OWASP A05:2021"
     ],
     "hints": {
-      "line": "The sink is the single call that turns bytes back into a live object.",
-      "bugClass": "Untrusted bytes become live objects.",
-      "why": "Does the cast on line 12 happen before or after the object is built?",
-      "fix": "Use a serializer that only reads data into a known type."
+      "line": "One line flips the parser from safe to fetch-anything.",
+      "bugClass": "It's about what the XML parser will go and load.",
+      "why": "What does a resolver let a `<!ENTITY ... SYSTEM ...>` do?",
+      "fix": "Turn external resolution off entirely."
     }
   },
   "writeup": {
-    "summary": "`BinaryFormatter.Deserialize` reconstructs whatever types the serialized stream names and invokes their callbacks, so a crafted cookie can drive a 'gadget chain' (e.g. via `TypeConfuseDelegate`) to run arbitrary code the moment it is deserialized — before any cast or validation. Because the input is a user-controlled cookie, this is remote code execution. Microsoft has deprecated BinaryFormatter for exactly this reason. The fix is to stop using it: a data-only serializer like System.Text.Json reads fields into a known type and never instantiates arbitrary types or runs their callbacks.",
+    "summary": "Setting `XmlResolver = new XmlUrlResolver()` tells the parser to resolve external entities and DTDs. A document declaring `<!ENTITY x SYSTEM \"file:///etc/passwd\">` and referencing `&x;` inside `<customer>` makes the parser read that file and place its contents in the parsed value; a `http://` system id turns it into server-side request forgery against internal hosts. On modern .NET the default resolver is already null, but explicitly assigning one re-enables the danger. The fix sets `XmlResolver = null`, so external references are never fetched. Schema validation and output encoding address other stages and don't stop entity resolution during `LoadXml`.",
     "readNext": [
       {
-        "label": "Microsoft: BinaryFormatter security guide",
-        "url": "https://learn.microsoft.com/en-us/dotnet/standard/serialization/binaryformatter-security-guide"
+        "label": "OWASP XXE Prevention Cheat Sheet (.NET)",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html#net"
       },
       {
-        "label": "YSoSerial.Net (gadget chains)",
-        "url": "https://github.com/pwntester/ysoserial.net"
+        "label": "Microsoft: XmlResolver and secure XML parsing",
+        "url": "https://learn.microsoft.com/en-us/dotnet/standard/data/xml/resolving-external-resources"
       }
     ]
   }

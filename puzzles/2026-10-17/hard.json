@@ -1,58 +1,53 @@
 {
-  "id": "srd-0024",
+  "id": "srd-0027",
   "date": "2026-10-17",
   "difficulty": "hard",
-  "language": "c",
+  "language": "java",
   "estimatedMinutes": 30,
   "snippet": {
     "files": [
       {
-        "name": "ngx_range.c",
-        "code": "/* Simplified from nginx ngx_http_range_parser(), pre-patch (CVE-2017-7529). */\n/* 'start' and 'end' are parsed from the attacker's Range header. */\nstatic ngx_int_t range_body(u_char *cache_data, off_t content_length,\n                            off_t start, off_t end, ngx_http_request_t *r)\n{\n    if (end >= content_length)\n        end = content_length;\n\n    ngx_uint_t size = end - start;          /* unsigned subtraction */\n    u_char *buf = ngx_pcalloc(r->pool, size);\n    ngx_memcpy(buf, cache_data + start, size);\n    return ngx_http_output(r, buf, size);\n}",
+        "name": "Greeter.java",
+        "code": "// Simplified from Apache Commons Text, pre-1.10 (CVE-2022-42889).\nimport org.apache.commons.text.StringSubstitutor;\n\npublic String greet(String name) {\n    StringSubstitutor interpolator = StringSubstitutor.createInterpolator();\n    // Build a greeting from the user-supplied name.\n    return interpolator.replace(\"Hello, \" + name + \"!\");\n}",
         "notes": {
-          "3": "Builds the body for a byte-range request over cached data.",
-          "6": "Clamps `end` down to the content length.",
-          "7": "The clamp — note it never checks that `start <= end`.",
-          "9": "Computes how many bytes to emit as an UNSIGNED value.",
-          "10": "Allocates a buffer of that size from the request pool.",
-          "11": "Copies `size` bytes starting at `cache_data + start`.",
-          "12": "Sends the buffer back to the client."
+          "4": "Takes a user-supplied name.",
+          "5": "Creates the default interpolator — which, pre-1.10, enabled `script`, `dns`, and `url` lookups.",
+          "7": "Interpolates the string, expanding any `${...}` the name contains."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "ngx_range.c",
-      "line": 9,
+      "file": "Greeter.java",
+      "line": 7,
       "yellowRadius": 2,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "int-overflow",
+      "answer": "code-inj",
       "options": [
-        "int-overflow",
-        "oob-read",
-        "buffer-overflow",
-        "sign-confusion",
-        "use-after-free",
-        "null-deref",
-        "format-string"
+        "code-inj",
+        "log-inj",
+        "insecure-deser",
+        "ssrf",
+        "command-inj",
+        "xxe"
       ]
     },
     "why": {
-      "answerIndex": 2,
+      "answerIndex": 1,
       "options": [
         {
-          "label": "`ngx_pcalloc` can return NULL for size 0, which is then dereferenced",
-          "whyWrong": "A null/zero-size edge case is minor; the exploited bug is the enormous copy length."
+          "label": "Building the string with `+` is inefficient for long names",
+          "whyWrong": "Performance is irrelevant; the interpolation step is the danger."
         },
         {
-          "label": "`cache_data` may be NULL on a cache miss, crashing the worker",
-          "whyWrong": "That's a different code path; here the data exists and is over-read."
+          "label": "`createInterpolator()` enables lookups (script, url, dns), and the name is interpolated, so `${script:...}` executes code and `${url:...}` makes server-side requests"
         },
         {
-          "label": "If the parsed `end` is less than `start`, `end - start` wraps around in unsigned arithmetic to a near-maximum value, so `memcpy` reads far past the cache buffer and returns adjacent worker memory"
+          "label": "`replace()` can throw on an unmatched `}`",
+          "whyWrong": "A parse exception is trivial next to code execution."
         }
       ]
     },
@@ -60,54 +55,58 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Cap size at a fixed maximum such as 1 MB",
-          "diff": "+    if (size > 1048576) size = 1048576;\n     u_char *buf = ngx_pcalloc(r->pool, size);",
-          "whyWrong": "It still allows reading up to that many bytes out of bounds, and truncates legitimately large ranges. The length must come from a validated range."
+          "label": "Strip '${' from name before interpolating",
+          "diff": "+    name = name.replace(\"${\", \"\");",
+          "whyWrong": "Nested/obfuscated expressions can reconstruct the marker after stripping."
         },
         {
-          "label": "Reject the request unless 0 <= start <= end <= content_length before computing size",
-          "diff": "-    if (end >= content_length)\n-        end = content_length;\n-\n-    ngx_uint_t size = end - start;\n+    if (start < 0 || end > content_length || start > end)\n+        return NGX_HTTP_RANGE_NOT_SATISFIABLE;\n+    ngx_uint_t size = end - start;"
+          "label": "Don't run untrusted input through an interpolator; insert `name` as data without expression evaluation",
+          "diff": "-    StringSubstitutor interpolator = StringSubstitutor.createInterpolator();\n-    return interpolator.replace(\"Hello, \" + name + \"!\");\n+    return \"Hello, \" + name + \"!\"; // no interpolation of user input"
         },
         {
-          "label": "Allocate buf with size + 1 to avoid an off-by-one",
-          "diff": "-    u_char *buf = ngx_pcalloc(r->pool, size);\n+    u_char *buf = ngx_pcalloc(r->pool, size + 1);",
-          "whyWrong": "There's no off-by-one here; the memcpy length itself is the attacker-controlled huge value."
+          "label": "Catch exceptions thrown by replace()",
+          "diff": "+    try { return interpolator.replace(...); } catch (Exception e) { return \"Hello!\"; }",
+          "whyWrong": "The lookup executes during replace(); catching afterward doesn't prevent it."
+        },
+        {
+          "label": "HTML-encode name before interpolating",
+          "diff": "+    name = escapeHtml(name);",
+          "whyWrong": "Wrong context; HTML escaping doesn't stop `${...}` lookups from firing."
         }
       ]
     }
   },
   "source": {
     "origin": "cve",
-    "cve": "CVE-2017-7529",
-    "project": "nginx",
-    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2017-7529",
-    "license": "BSD-2-Clause",
-    "attribution": "nginx, CVE-2017-7529, simplified"
+    "cve": "CVE-2022-42889",
+    "project": "Apache Commons Text",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2022-42889",
+    "license": "Apache-2.0",
+    "attribution": "Apache Commons Text, CVE-2022-42889 (Text4Shell), simplified"
   },
   "training": {
-    "exploit": "Against a cached response, send a crafted `Range` header (e.g. a negative/suffix range) so the parsed `end` ends up smaller than `start`. `end - start` underflows to roughly `SIZE_MAX`, nginx allocates/copies far beyond the cached file, and the response returns chunks of the worker's memory — other clients' responses, cache contents, potentially secrets — an information leak with no authentication.",
+    "exploit": "Pass a name of `${script:javascript:java.lang.Runtime.getRuntime().exec('id')}` — the interpolator's script lookup evaluates it and runs the command (remote code execution). `${url:UTF-8:http://169.254.169.254/...}` turns it into SSRF, and `${dns:...}` exfiltrates data over DNS.",
     "concepts": [
-      "CWE-190",
-      "CWE-125",
-      "CVE-2017-7529"
+      "CWE-94",
+      "CVE-2022-42889"
     ],
     "hints": {
-      "line": "The dangerous value is a length computed by subtraction.",
-      "bugClass": "Arithmetic produces a value no one intended.",
-      "why": "What is `end - start` when `end < start` and the type is unsigned?",
-      "fix": "Validate the ordering and bounds of start/end first."
+      "line": "The RCE is in the interpolation of user text.",
+      "bugClass": "Attacker text is evaluated as an expression.",
+      "why": "What lookups does the default interpolator enable?",
+      "fix": "Never interpolate untrusted input; keep it as data."
     }
   },
   "writeup": {
-    "summary": "The range body length is computed as `end - start` in unsigned arithmetic after only clamping `end` — nothing ensures `start <= end`. A crafted Range header makes `end < start`, so the subtraction underflows to a near-`SIZE_MAX` length. nginx then copies that many bytes starting inside the cached data, reading far past it and returning adjacent worker memory to the attacker — a remote information-disclosure bug. The fix validates `0 <= start <= end <= content_length` before computing the size; capping the size only limits how much memory leaks.",
+    "summary": "`StringSubstitutor.createInterpolator()` (before Commons Text 1.10) registered `script`, `dns`, and `url` lookups. Interpolating a string that embeds the user's `name` means a value like `${script:javascript:...}` is evaluated as code — remote code execution — while `${url:...}`/`${dns:...}` enable SSRF and exfiltration. This is Text4Shell. The fix is to never run untrusted input through an interpolator: build the greeting with the name as plain data, or use a substitutor configured without the dangerous lookups.",
     "readNext": [
       {
-        "label": "CVE-2017-7529 (NVD)",
-        "url": "https://nvd.nist.gov/vuln/detail/CVE-2017-7529"
+        "label": "CVE-2022-42889 (NVD)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2022-42889"
       },
       {
-        "label": "nginx security advisories",
-        "url": "https://nginx.org/en/security_advisories.html"
+        "label": "Apache Commons Text security",
+        "url": "https://commons.apache.org/proper/commons-text/security.html"
       }
     ]
   }

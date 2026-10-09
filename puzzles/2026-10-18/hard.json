@@ -1,53 +1,58 @@
 {
-  "id": "srd-0027",
+  "id": "srd-0030",
   "date": "2026-10-18",
   "difficulty": "hard",
-  "language": "java",
+  "language": "c",
   "estimatedMinutes": 30,
   "snippet": {
     "files": [
       {
-        "name": "Greeter.java",
-        "code": "// Simplified from Apache Commons Text, pre-1.10 (CVE-2022-42889).\nimport org.apache.commons.text.StringSubstitutor;\n\npublic String greet(String name) {\n    StringSubstitutor interpolator = StringSubstitutor.createInterpolator();\n    // Build a greeting from the user-supplied name.\n    return interpolator.replace(\"Hello, \" + name + \"!\");\n}",
+        "name": "session.c",
+        "code": "/* Handle a request: look up the session, refresh it, build a reply. */\nstruct session *sess = find_session(id);\nif (sess == NULL)\n    return -1;\n\nif (sess->expired) {\n    free_session(sess);          /* frees sess and unlinks it from the table */\n}\n\n/* Refresh last-seen time and build the response. */\nsess->last_seen = now();\nsnprintf(out, len, \"welcome %s\", sess->user);\nreturn 0;",
         "notes": {
-          "4": "Takes a user-supplied name.",
-          "5": "Creates the default interpolator — which, pre-1.10, enabled `script`, `dns`, and `url` lookups.",
-          "7": "Interpolates the string, expanding any `${...}` the name contains."
+          "2": "Looks up the session object for this request id.",
+          "3": "Guards against a missing session.",
+          "6": "If the session has expired...",
+          "7": "...it is freed and removed from the session table.",
+          "11": "Writes to the session struct.",
+          "12": "Reads the username out of the session struct.",
+          "13": "Returns success."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "Greeter.java",
-      "line": 7,
+      "file": "session.c",
+      "line": 11,
       "yellowRadius": 2,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "code-inj",
+      "answer": "use-after-free",
       "options": [
-        "code-inj",
-        "log-inj",
-        "insecure-deser",
-        "ssrf",
-        "command-inj",
-        "xxe"
+        "use-after-free",
+        "null-deref",
+        "buffer-overflow",
+        "oob-read",
+        "int-overflow",
+        "toctou",
+        "format-string"
       ]
     },
     "why": {
       "answerIndex": 1,
       "options": [
         {
-          "label": "Building the string with `+` is inefficient for long names",
-          "whyWrong": "Performance is irrelevant; the interpolation step is the danger."
+          "label": "`find_session` can return NULL and is dereferenced",
+          "whyWrong": "Lines 3-4 already handle NULL; the problem is use of a freed pointer, not a null one."
         },
         {
-          "label": "`createInterpolator()` enables lookups (script, url, dns), and the name is interpolated, so `${script:...}` executes code and `${url:...}` makes server-side requests"
+          "label": "When the session is expired it is freed on line 7, but lines 11-12 still dereference `sess`, reading and writing memory that has been returned to the allocator"
         },
         {
-          "label": "`replace()` can throw on an unmatched `}`",
-          "whyWrong": "A parse exception is trivial next to code execution."
+          "label": "`snprintf` may truncate a long username",
+          "whyWrong": "Truncation is benign; it is not the memory-safety defect."
         }
       ]
     },
@@ -55,58 +60,45 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Strip '${' from name before interpolating",
-          "diff": "+    name = name.replace(\"${\", \"\");",
-          "whyWrong": "Nested/obfuscated expressions can reconstruct the marker after stripping."
+          "label": "Set sess = NULL after free_session(sess)",
+          "diff": "     free_session(sess);\n+    sess = NULL;",
+          "whyWrong": "Lines 11-12 would then dereference NULL and crash; the code still uses an invalid pointer instead of avoiding the use."
         },
         {
-          "label": "Don't run untrusted input through an interpolator; insert `name` as data without expression evaluation",
-          "diff": "-    StringSubstitutor interpolator = StringSubstitutor.createInterpolator();\n-    return interpolator.replace(\"Hello, \" + name + \"!\");\n+    return \"Hello, \" + name + \"!\"; // no interpolation of user input"
+          "label": "After freeing an expired session, return immediately instead of continuing to use it",
+          "diff": "     if (sess->expired) {\n         free_session(sess);\n+        return -1;   /* session gone; do not touch it */\n     }"
         },
         {
-          "label": "Catch exceptions thrown by replace()",
-          "diff": "+    try { return interpolator.replace(...); } catch (Exception e) { return \"Hello!\"; }",
-          "whyWrong": "The lookup executes during replace(); catching afterward doesn't prevent it."
-        },
-        {
-          "label": "HTML-encode name before interpolating",
-          "diff": "+    name = escapeHtml(name);",
-          "whyWrong": "Wrong context; HTML escaping doesn't stop `${...}` lookups from firing."
+          "label": "Replace free_session(sess) with free(sess)",
+          "diff": "-    free_session(sess);\n+    free(sess);",
+          "whyWrong": "This still frees the object and leaves the later dereferences dangling (and skips unlinking it from the table)."
         }
       ]
     }
   },
   "source": {
-    "origin": "cve",
-    "cve": "CVE-2022-42889",
-    "project": "Apache Commons Text",
-    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2022-42889",
-    "license": "Apache-2.0",
-    "attribution": "Apache Commons Text, CVE-2022-42889 (Text4Shell), simplified"
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original (use-after-free pattern)"
   },
   "training": {
-    "exploit": "Pass a name of `${script:javascript:java.lang.Runtime.getRuntime().exec('id')}` — the interpolator's script lookup evaluates it and runs the command (remote code execution). `${url:UTF-8:http://169.254.169.254/...}` turns it into SSRF, and `${dns:...}` exfiltrates data over DNS.",
+    "exploit": "Request an expired session so line 7 frees `sess`. The allocator may hand that chunk to another concurrent allocation before line 11 runs, so writing `sess->last_seen` corrupts the new object and reading `sess->user` dereferences attacker-influenced data. With heap grooming this turns into controlled memory corruption — crashes at minimum, code execution at worst.",
     "concepts": [
-      "CWE-94",
-      "CVE-2022-42889"
+      "CWE-416"
     ],
     "hints": {
-      "line": "The RCE is in the interpolation of user text.",
-      "bugClass": "Attacker text is evaluated as an expression.",
-      "why": "What lookups does the default interpolator enable?",
-      "fix": "Never interpolate untrusted input; keep it as data."
+      "line": "The object is touched after it was released.",
+      "bugClass": "Freed memory is used again.",
+      "why": "What state is `sess` in on line 11 when the session was expired?",
+      "fix": "Stop using the object once it's been freed."
     }
   },
   "writeup": {
-    "summary": "`StringSubstitutor.createInterpolator()` (before Commons Text 1.10) registered `script`, `dns`, and `url` lookups. Interpolating a string that embeds the user's `name` means a value like `${script:javascript:...}` is evaluated as code — remote code execution — while `${url:...}`/`${dns:...}` enable SSRF and exfiltration. This is Text4Shell. The fix is to never run untrusted input through an interpolator: build the greeting with the name as plain data, or use a substitutor configured without the dangerous lookups.",
+    "summary": "On the expired branch, `free_session(sess)` releases the object and unlinks it, but control falls through to lines 11-12, which write and read `sess` — a use-after-free. Between the free and the use, the allocator can reissue that memory to another allocation, so the write corrupts an unrelated object and the read returns attacker-influenceable bytes; careful heap grooming escalates this to code execution. The fix returns immediately after freeing (or only refreshes sessions that weren't freed), so the freed pointer is never dereferenced.",
     "readNext": [
       {
-        "label": "CVE-2022-42889 (NVD)",
-        "url": "https://nvd.nist.gov/vuln/detail/CVE-2022-42889"
-      },
-      {
-        "label": "Apache Commons Text security",
-        "url": "https://commons.apache.org/proper/commons-text/security.html"
+        "label": "CWE-416: Use After Free",
+        "url": "https://cwe.mitre.org/data/definitions/416.html"
       }
     ]
   }

@@ -1,5 +1,5 @@
 {
-  "id": "srd-0030",
+  "id": "srd-0033",
   "date": "2026-10-19",
   "difficulty": "hard",
   "language": "c",
@@ -7,36 +7,32 @@
   "snippet": {
     "files": [
       {
-        "name": "session.c",
-        "code": "/* Handle a request: look up the session, refresh it, build a reply. */\nstruct session *sess = find_session(id);\nif (sess == NULL)\n    return -1;\n\nif (sess->expired) {\n    free_session(sess);          /* frees sess and unlinks it from the table */\n}\n\n/* Refresh last-seen time and build the response. */\nsess->last_seen = now();\nsnprintf(out, len, \"welcome %s\", sess->user);\nreturn 0;",
+        "name": "cgi_main.c",
+        "code": "/* Simplified from php-cgi query-string handling, pre-patch (CVE-2012-1823). */\n/* If the query string has no unencoded '=', treat it as CLI arguments. */\nif (query_string != NULL && strchr(query_string, '=') == NULL) {\n    decoded = url_decode(query_string);\n    php_build_argv(decoded, &argc, &argv);   /* e.g. \"-d\", \"auto_prepend_file=...\" */\n    cgi_handle_args(argc, argv);             /* php interprets -d / -s / -r flags */\n}",
         "notes": {
-          "2": "Looks up the session object for this request id.",
-          "3": "Guards against a missing session.",
-          "6": "If the session has expired...",
-          "7": "...it is freed and removed from the session table.",
-          "11": "Writes to the session struct.",
-          "12": "Reads the username out of the session struct.",
-          "13": "Returns success."
+          "3": "If a query string is present and contains no `=`, enter this block.",
+          "4": "URL-decodes the query string.",
+          "5": "Splits it into argc/argv as if they were command-line arguments.",
+          "6": "Hands those to PHP's CLI argument handler, which honors flags like -d, -s, -r."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "session.c",
-      "line": 11,
-      "yellowRadius": 2,
+      "file": "cgi_main.c",
+      "line": 3,
+      "yellowRadius": 3,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "use-after-free",
+      "answer": "code-inj",
       "options": [
-        "use-after-free",
-        "null-deref",
-        "buffer-overflow",
-        "oob-read",
-        "int-overflow",
-        "toctou",
+        "code-inj",
+        "command-inj",
+        "path-traversal",
+        "insecure-deser",
+        "ssrf",
         "format-string"
       ]
     },
@@ -44,15 +40,15 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "`find_session` can return NULL and is dereferenced",
-          "whyWrong": "Lines 3-4 already handle NULL; the problem is use of a freed pointer, not a null one."
+          "label": "`url_decode` can overflow for a very long query string",
+          "whyWrong": "No overflow is implied here; the flaw is forwarding the query string to the CLI parser."
         },
         {
-          "label": "When the session is expired it is freed on line 7, but lines 11-12 still dereference `sess`, reading and writing memory that has been returned to the allocator"
+          "label": "A query string with no `=` is handed to PHP's CLI argument parser, so an attacker passes flags like `-d auto_prepend_file=php://input` to execute arbitrary PHP"
         },
         {
-          "label": "`snprintf` may truncate a long username",
-          "whyWrong": "Truncation is benign; it is not the memory-safety defect."
+          "label": "`strchr` returns NULL for an empty string, skipping the block",
+          "whyWrong": "An edge case in the check, not the remote-code-execution mechanism."
         }
       ]
     },
@@ -60,45 +56,53 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Set sess = NULL after free_session(sess)",
-          "diff": "     free_session(sess);\n+    sess = NULL;",
-          "whyWrong": "Lines 11-12 would then dereference NULL and crash; the code still uses an invalid pointer instead of avoiding the use."
+          "label": "Reject query strings that begin with '-'",
+          "diff": "+    if (query_string[0] == '-') return;\n     if (query_string != NULL && strchr(...) == NULL) {",
+          "whyWrong": "Arguments can be reordered or separated so a flag isn't first; the CLI parser is still reachable."
         },
         {
-          "label": "After freeing an expired session, return immediately instead of continuing to use it",
-          "diff": "     if (sess->expired) {\n         free_session(sess);\n+        return -1;   /* session gone; do not touch it */\n     }"
+          "label": "Do not pass HTTP query strings to the CLI argument parser when running as CGI/FastCGI",
+          "diff": "-if (query_string != NULL && strchr(query_string, '=') == NULL) {\n-    decoded = url_decode(query_string);\n-    php_build_argv(decoded, &argc, &argv);\n-    cgi_handle_args(argc, argv);\n-}\n+/* In CGI/FastCGI mode, never interpret the query string as CLI args. */\n+if (!cgi_sapi) {\n+    /* argv handling only for the real command line */\n+}"
         },
         {
-          "label": "Replace free_session(sess) with free(sess)",
-          "diff": "-    free_session(sess);\n+    free(sess);",
-          "whyWrong": "This still frees the object and leaves the later dereferences dangling (and skips unlinking it from the table)."
+          "label": "Block the substring 'auto_prepend_file' in the query string",
+          "diff": "+    if (strstr(query_string, \"auto_prepend_file\")) return;",
+          "whyWrong": "Other flags (-r to run code, -s to leak source, -d with different settings) still achieve execution or disclosure."
         }
       ]
     }
   },
   "source": {
-    "origin": "original",
-    "license": "CC0-1.0",
-    "attribution": "SourceReadle original (use-after-free pattern)"
+    "origin": "cve",
+    "cve": "CVE-2012-1823",
+    "project": "PHP (php-cgi)",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2012-1823",
+    "license": "PHP-3.01",
+    "attribution": "PHP php-cgi, CVE-2012-1823, simplified"
   },
   "training": {
-    "exploit": "Request an expired session so line 7 frees `sess`. The allocator may hand that chunk to another concurrent allocation before line 11 runs, so writing `sess->last_seen` corrupts the new object and reading `sess->user` dereferences attacker-influenced data. With heap grooming this turns into controlled memory corruption — crashes at minimum, code execution at worst.",
+    "exploit": "Request `/index.php?-d+allow_url_include%3d1+-d+auto_prepend_file%3dphp://input` with a POST body of `<?php system('id'); ?>`. Because the query string has no decoded `=`, php-cgi treats it as CLI flags, prepends the request body as a PHP file, and executes it — unauthenticated RCE. `?-s` alone discloses the script's source.",
     "concepts": [
-      "CWE-416"
+      "CWE-94",
+      "CVE-2012-1823"
     ],
     "hints": {
-      "line": "The object is touched after it was released.",
-      "bugClass": "Freed memory is used again.",
-      "why": "What state is `sess` in on line 11 when the session was expired?",
-      "fix": "Stop using the object once it's been freed."
+      "line": "The fateful decision is whether to treat the query string as CLI args.",
+      "bugClass": "Attacker input becomes interpreter flags that run code.",
+      "why": "What do PHP flags like -d/-r let you do?",
+      "fix": "In CGI mode, never route the query string to the argv parser."
     }
   },
   "writeup": {
-    "summary": "On the expired branch, `free_session(sess)` releases the object and unlinks it, but control falls through to lines 11-12, which write and read `sess` — a use-after-free. Between the free and the use, the allocator can reissue that memory to another allocation, so the write corrupts an unrelated object and the read returns attacker-influenceable bytes; careful heap grooming escalates this to code execution. The fix returns immediately after freeing (or only refreshes sessions that weren't freed), so the freed pointer is never dereferenced.",
+    "summary": "php-cgi treated a query string with no decoded `=` as command-line arguments and passed it to PHP's CLI flag parser. An attacker supplies `-d`/`-r`/`-s` flags — classically `-d auto_prepend_file=php://input` plus a PHP body in the POST — to execute arbitrary code, or `-s` to disclose source. The correct fix is to never interpret HTTP query strings as CLI arguments when running as CGI/FastCGI; blocklisting specific flags or leading dashes leaves other flags reachable.",
     "readNext": [
       {
-        "label": "CWE-416: Use After Free",
-        "url": "https://cwe.mitre.org/data/definitions/416.html"
+        "label": "CVE-2012-1823 (NVD)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2012-1823"
+      },
+      {
+        "label": "PHP bug #61910",
+        "url": "https://bugs.php.net/bug.php?id=61910"
       }
     ]
   }

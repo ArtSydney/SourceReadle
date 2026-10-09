@@ -1,56 +1,54 @@
 {
-  "id": "srd-0036",
+  "id": "srd-0039",
   "date": "2026-10-21",
   "difficulty": "hard",
-  "language": "c",
+  "language": "java",
   "estimatedMinutes": 30,
   "snippet": {
     "files": [
       {
-        "name": "image.c",
-        "code": "/* Read a raw image from a packet: width x height pixels, 4 bytes each. */\nuint32_t w = read_u32(pkt);               /* attacker-controlled */\nuint32_t h = read_u32(pkt);               /* attacker-controlled */\nuint32_t *pixels = malloc(w * h * 4);     /* allocation size */\nfor (uint32_t i = 0; i < w * h; i++)\n    pixels[i] = read_u32(pkt);",
+        "name": "TokenEndpoint.java",
+        "code": "import java.io.*;\n\n// Rebuild a session token the client posted back to us.\npublic Object handle(InputStream body) throws Exception {\n    ObjectInputStream ois = new ObjectInputStream(body);\n    Object token = ois.readObject();   // reconstructs whatever the stream names\n    return process(token);\n}",
         "notes": {
-          "2": "Reads a 32-bit width from the packet — attacker-controlled.",
-          "3": "Reads a 32-bit height — attacker-controlled.",
-          "4": "Allocates `w * h * 4` bytes. The multiplication is done in 32-bit unsigned.",
-          "5": "Loops `w * h` times...",
-          "6": "...writing one 4-byte pixel per iteration."
+          "4": "Handles a request whose body is a serialized Java object.",
+          "5": "Wraps the request body in an ObjectInputStream.",
+          "6": "Reconstructs an object graph from the bytes — instantiating whatever classes the stream specifies.",
+          "7": "Passes the result on for processing."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "image.c",
-      "line": 4,
-      "yellowRadius": 2,
+      "file": "TokenEndpoint.java",
+      "line": 6,
+      "yellowRadius": 1,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "int-overflow",
+      "answer": "insecure-deser",
       "options": [
-        "int-overflow",
-        "buffer-overflow",
-        "oob-read",
-        "sign-confusion",
-        "use-after-free",
-        "null-deref",
-        "format-string"
+        "insecure-deser",
+        "code-inj",
+        "xxe",
+        "sqli",
+        "ssrf",
+        "idor"
       ]
     },
     "why": {
-      "answerIndex": 2,
+      "answerIndex": 0,
       "options": [
         {
-          "label": "`malloc` is not checked for NULL before use",
-          "whyWrong": "A missing NULL check is a separate, lesser issue; the exploited bug is that the buffer is far too small for the writes."
+          "label": "`readObject` reconstructs arbitrary serializable classes and runs their callbacks (readObject/readResolve/finalize), so a crafted stream drives a gadget chain of classes on the classpath to execute code"
         },
         {
-          "label": "`read_u32` might read past the end of the packet",
-          "whyWrong": "That's an input-length concern; the heap overflow here comes from the size miscalculation, not the read."
+          "label": "`readObject` blocks until the whole body arrives, enabling a slow-read DoS",
+          "whyWrong": "A DoS is minor next to the remote code execution this allows."
         },
         {
-          "label": "`w * h * 4` is computed in 32-bit unsigned and can wrap to a small value, so `malloc` under-allocates while the loop still writes `w * h` pixels — overflowing the buffer"
+          "label": "Casting `token` to a concrete type later may throw ClassCastException",
+          "whyWrong": "By the time any cast runs, the gadget has already executed during readObject."
         }
       ]
     },
@@ -58,18 +56,18 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Cast the size to int before calling malloc",
-          "diff": "-uint32_t *pixels = malloc(w * h * 4);\n+uint32_t *pixels = malloc((int)(w * h * 4));",
-          "whyWrong": "A signed 32-bit cast adds no range and can go negative; the multiplication has already wrapped."
+          "label": "Wrap readObject in try/catch and return null on error",
+          "diff": "+    try {\n     Object token = ois.readObject();\n+    } catch (Exception e) { return null; }",
+          "whyWrong": "The gadget executes during readObject; catching the exception afterward doesn't prevent it."
         },
         {
-          "label": "Compute the size in 64-bit and reject dimensions whose product overflows or exceeds a sane limit",
-          "diff": "-uint32_t *pixels = malloc(w * h * 4);\n+uint64_t bytes = (uint64_t)w * h * 4;\n+if (w == 0 || h == 0 || bytes > MAX_IMAGE_BYTES)\n+    return -1;\n+uint32_t *pixels = malloc((size_t)bytes);"
+          "label": "Don't deserialize untrusted input — use a data format (e.g. JSON) or enforce a strict class allowlist via ObjectInputFilter",
+          "diff": "-    ObjectInputStream ois = new ObjectInputStream(body);\n-    Object token = ois.readObject();\n+    Token token = jsonMapper.readValue(body, Token.class); // data-only; no arbitrary classes"
         },
         {
-          "label": "Allocate w * h * 4 + 1 bytes",
-          "diff": "-uint32_t *pixels = malloc(w * h * 4);\n+uint32_t *pixels = malloc(w * h * 4 + 1);",
-          "whyWrong": "A one-byte pad does nothing against a multiplicative wrap of gigabytes down to a few bytes."
+          "label": "Run the handler under a restricted OS user",
+          "diff": "# deploy as an unprivileged user",
+          "whyWrong": "Dropping privileges limits blast radius but still allows code execution as that user; the deserialization sink is unchanged."
         }
       ]
     }
@@ -77,27 +75,31 @@
   "source": {
     "origin": "original",
     "license": "CC0-1.0",
-    "attribution": "SourceReadle original (integer overflow to heap overflow)"
+    "attribution": "SourceReadle original (Java ObjectInputStream deserialization; ysoserial / FoxGlove 2015 research)"
   },
   "training": {
-    "exploit": "Send `w = 0x40000001`, `h = 1`. The loop runs `w * h` ≈ 1,073,741,825 times, but `w * h * 4` wraps around 2^32 to just `4`, so `malloc` returns a 4-byte buffer. The loop then writes ~1 billion attacker-controlled 4-byte values far past it, smashing the heap — reliable memory corruption that can be steered to code execution.",
+    "exploit": "If a library with a known gadget chain (e.g. Apache Commons Collections) is on the classpath, generate a payload with a tool like ysoserial and POST it as the request body. When `readObject` deserializes it, the chain's callbacks run and execute an attacker command — unauthenticated remote code execution, no valid token required.",
     "concepts": [
-      "CWE-190",
-      "CWE-787"
+      "CWE-502",
+      "OWASP A08:2021"
     ],
     "hints": {
-      "line": "The bug is in the size arithmetic, not the loop body.",
-      "bugClass": "A computed value wraps past its type's range.",
-      "why": "What does `w * h * 4` become in 32-bit when the true product exceeds 2^32?",
-      "fix": "Do the math in 64-bit and bound it before allocating."
+      "line": "The sink turns posted bytes into live Java objects.",
+      "bugClass": "Untrusted bytes become arbitrary objects.",
+      "why": "What runs while Java reconstructs a serialized object graph?",
+      "fix": "Don't native-deserialize untrusted input; use data-only parsing."
     }
   },
   "writeup": {
-    "summary": "`w * h * 4` is evaluated in 32-bit unsigned arithmetic, so large dimensions wrap the product down to a tiny number; `malloc` then returns a buffer far smaller than the `w * h` pixels the loop writes, producing a heap buffer overflow with attacker-controlled contents. The fix computes the size in 64-bit, rejects zero and anything whose product overflows or exceeds a sane cap, and only then allocates. Casting or padding doesn't address the wrap.",
+    "summary": "`ObjectInputStream.readObject` reconstructs whatever classes the byte stream names and invokes their serialization callbacks, so an attacker who can POST bytes drives a 'gadget chain' of classes already on the classpath (famously Apache Commons Collections) to execute code — before any application logic runs. The robust fix is to not native-deserialize untrusted input at all: use a data-only format like JSON, or, if Java serialization is unavoidable, install a strict `ObjectInputFilter` allowlist. Try/catch and privilege-dropping don't stop the gadget from firing.",
     "readNext": [
       {
-        "label": "CWE-190: Integer Overflow or Wraparound",
-        "url": "https://cwe.mitre.org/data/definitions/190.html"
+        "label": "OWASP Deserialization Cheat Sheet (Java)",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html#java"
+      },
+      {
+        "label": "Java ObjectInputFilter (JEP 290)",
+        "url": "https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/ObjectInputFilter.html"
       }
     ]
   }

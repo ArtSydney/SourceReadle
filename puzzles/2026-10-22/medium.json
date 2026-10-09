@@ -1,39 +1,36 @@
 {
-  "id": "srd-0038",
+  "id": "srd-0041",
   "date": "2026-10-22",
   "difficulty": "medium",
-  "language": "csharp",
+  "language": "javascript",
   "estimatedMinutes": 15,
   "snippet": {
     "files": [
       {
-        "name": "AdminController.cs",
-        "code": "[ApiController]\n[Route(\"api/admin\")]\npublic class AdminController : ControllerBase\n{\n    private readonly IUserStore _users;\n\n    [HttpPost(\"users/{id}/delete\")]\n    public IActionResult DeleteUser(int id)\n    {\n        _users.Delete(id);\n        return Ok();\n    }\n}",
+        "name": "static.js",
+        "code": "const express = require(\"express\");\nconst path = require(\"path\");\nconst app = express();\n\napp.get(\"/download\", (req, res) => {\n  // Serve a file from the public directory.\n  const file = req.query.file;\n  res.sendFile(path.join(__dirname, \"public\", file));\n});",
         "notes": {
-          "2": "All actions live under /api/admin.",
-          "7": "Maps POST /api/admin/users/{id}/delete to this action.",
-          "8": "The action handler — note there is no authorization attribute on it or the controller.",
-          "10": "Deletes the user with the given id.",
-          "11": "Returns success."
+          "5": "The /download route.",
+          "7": "Reads the `file` query parameter — attacker-controlled.",
+          "8": "Joins it onto the public directory and serves the resulting absolute path."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "AdminController.cs",
+      "file": "static.js",
       "line": 8,
-      "yellowRadius": 2,
+      "yellowRadius": 1,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "missing-authz",
+      "answer": "path-traversal",
       "options": [
-        "missing-authz",
+        "path-traversal",
+        "zip-slip",
         "idor",
-        "auth-bypass",
         "ssrf",
-        "sqli",
         "open-redirect"
       ]
     },
@@ -41,15 +38,15 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "A very large `id` could overflow the int",
-          "whyWrong": "Integer range isn't the issue; the lack of an access check is."
+          "label": "`sendFile` streams large files, which can exhaust memory",
+          "whyWrong": "Streaming is fine; the flaw is which file can be selected."
         },
         {
-          "label": "The action deletes any user but carries no authentication or authorization check, so any caller — not just admins — can invoke it"
+          "label": "`file` is attacker-controlled and `path.join` resolves `../` segments, so the absolute path handed to `sendFile` can point outside the public directory"
         },
         {
-          "label": "Returning `Ok()` reveals that the user existed",
-          "whyWrong": "An information nuance is trivial next to anyone being able to delete accounts."
+          "label": "`req.query.file` can be an array, causing a type error",
+          "whyWrong": "A type edge case is robustness, not the traversal."
         }
       ]
     },
@@ -57,23 +54,23 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Rename the route to something non-guessable",
-          "diff": "-    [Route(\"api/admin\")]\n+    [Route(\"api/x7f2\")]",
-          "whyWrong": "Security by obscurity; once the route is discovered it's still wide open."
+          "label": "Remove '..' from file",
+          "diff": "+  const file = (req.query.file || \"\").replace(/\\.\\./g, \"\");",
+          "whyWrong": "`....//` collapses back to `../` and encoded forms slip through."
         },
         {
-          "label": "Require an admin role on the controller/action",
-          "diff": " [ApiController]\n [Route(\"api/admin\")]\n+[Authorize(Roles = \"Admin\")]\n public class AdminController : ControllerBase"
+          "label": "Use sendFile's root option so paths can't escape it",
+          "diff": "-  res.sendFile(path.join(__dirname, \"public\", file));\n+  res.sendFile(file, { root: path.join(__dirname, \"public\") });"
         },
         {
-          "label": "Validate that id is positive",
-          "diff": "+        if (id <= 0) return BadRequest();",
-          "whyWrong": "Input validation doesn't control who is allowed to delete users."
+          "label": "Only allow files ending in .pdf",
+          "diff": "+  if (!file.endsWith(\".pdf\")) return res.sendStatus(400);",
+          "whyWrong": "An extension check doesn't confine the directory; traversal to other .pdf paths (or suffix tricks) remains."
         },
         {
-          "label": "Return 404 instead of 200 after deleting",
-          "diff": "-        return Ok();\n+        return NotFound();",
-          "whyWrong": "Changing the response status adds no access check."
+          "label": "URL-decode file before joining",
+          "diff": "+  const file = decodeURIComponent(req.query.file);",
+          "whyWrong": "Decoding does nothing to confine the path and can normalize an attacker's sequences for them."
         }
       ]
     }
@@ -84,28 +81,28 @@
     "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "Send `POST /api/admin/users/1/delete` with no token or a non-admin token. With no `[Authorize]` on the controller or action, ASP.NET runs it for anyone who can reach the URL, deleting arbitrary accounts (a function-level access-control failure).",
+    "exploit": "Request `/download?file=../../../../etc/passwd`. `path.join` collapses the `../` segments into an absolute path outside `public`, and because that path is absolute, `sendFile` serves it without its traversal guard — returning arbitrary files.",
     "concepts": [
-      "CWE-862",
+      "CWE-22",
       "OWASP A01:2021"
     ],
     "hints": {
-      "line": "What's missing above the privileged action?",
-      "bugClass": "A sensitive action with no permission gate.",
-      "why": "Who is allowed to call this endpoint as written?",
-      "fix": "Require the appropriate role to reach it."
+      "line": "Where does user input become the file that's served?",
+      "bugClass": "Input steers which path is read.",
+      "why": "What does path.join do with `..`, and does sendFile guard an absolute path?",
+      "fix": "Let sendFile confine the path to a root directory."
     }
   },
   "writeup": {
-    "summary": "`DeleteUser` performs a privileged operation but neither the controller nor the action has any `[Authorize]` attribute, so it runs for any caller — a missing function-level authorization check. The fix applies `[Authorize(Roles = \"Admin\")]` (ideally at the controller) so only administrators can invoke it. Obscure routes, id validation, and response-code changes do not restrict who may act.",
+    "summary": "`path.join(__dirname, \"public\", file)` lets `../` in `file` climb out of the public directory, producing an absolute path that `sendFile` serves without applying its own traversal protection (which only engages for the `root`-relative form). Passing the filename through `sendFile(file, { root: publicDir })` makes Express reject any path that escapes `root`. Stripping `..` or checking extensions is bypassable.",
     "readNext": [
       {
-        "label": "ASP.NET Core authorization",
-        "url": "https://learn.microsoft.com/en-us/aspnet/core/security/authorization/introduction"
+        "label": "Express res.sendFile (root option)",
+        "url": "https://expressjs.com/en/api.html#res.sendFile"
       },
       {
-        "label": "OWASP A01:2021 Broken Access Control",
-        "url": "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+        "label": "OWASP Path Traversal",
+        "url": "https://owasp.org/www-community/attacks/Path_Traversal"
       }
     ]
   }

