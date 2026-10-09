@@ -46,6 +46,25 @@ Return only the JSON object.`;
 
 function stripFences(t) { return t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim(); }
 
+// Defuse secret-shaped strings an LLM might emit (e.g. in a hardcoded-secret
+// puzzle) so they can't trip GitHub push protection. Replacements keep the
+// recognizable prefix for teaching but break the scanner's pattern.
+const SECRET_SUBS = [
+  [/\b([sprk]k)_(live|test)_[A-Za-z0-9]{6,}/g, "$1_$2_EXAMPLE_not_a_real_key"],
+  [/\bAKIA[0-9A-Z]{6,}/g, "AKIA_EXAMPLE_NOT_REAL"],
+  [/\bgh[pousr]_[A-Za-z0-9]{10,}/g, "ghp_EXAMPLE_not_a_real_token"],
+  [/\bAIza[0-9A-Za-z_\-]{10,}/g, "AIza_EXAMPLE_not_real_key"],
+  [/\bxox[baprs]-[A-Za-z0-9-]{10,}/g, "xoxb-EXAMPLE-not-real"],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "-----BEGIN PRIVATE KEY----- EXAMPLE_not_a_real_key -----END PRIVATE KEY-----"],
+];
+function scrubStr(s) { let t = s; for (const [re, rep] of SECRET_SUBS) t = t.replace(re, rep); return t; }
+function scrubDeep(x) {
+  if (typeof x === "string") return scrubStr(x);
+  if (Array.isArray(x)) return x.map(scrubDeep);
+  if (x && typeof x === "object") { const o = {}; for (const k in x) o[k] = scrubDeep(x[k]); return o; }
+  return x;
+}
+
 // Returns a puzzle object (id/date/difficulty are forced regardless of model output).
 export async function draftOne({ diff, idNum, date, key, model, fake, catalog }) {
   let obj;
@@ -64,6 +83,7 @@ export async function draftOne({ diff, idNum, date, key, model, fake, catalog })
     const data = await res.json();
     obj = JSON.parse(stripFences((data.content || []).map((b) => b.text || "").join("")));
   }
+  obj = scrubDeep(obj);                              // defuse any secret-shaped strings
   obj.id = `srd-${String(idNum).padStart(4, "0")}`;
   obj.date = date;
   obj.difficulty = diff;
