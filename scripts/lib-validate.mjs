@@ -8,6 +8,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const taxonomy = JSON.parse(readFileSync(join(root, "schema", "taxonomy.json"), "utf8"));
 
 export const DIFFS = ["easy", "medium", "hard"];
+const LANGS = ["python", "csharp", "c", "cpp", "javascript", "go", "java", "ruby", "php", "rust"];
+// Links are rendered as <a href>; generated content must not smuggle javascript:/data: URLs.
+const isHttps = (u) => { try { return new URL(u).protocol === "https:"; } catch { return false; } };
 
 // ctx: { date, diff, seenIds? }  — date/diff are what the puzzle must declare.
 export function validatePuzzle(p, ctx = {}) {
@@ -20,6 +23,8 @@ export function validatePuzzle(p, ctx = {}) {
   if (ctx.seenIds) { if (ctx.seenIds.has(p.id)) fail("duplicate id"); else ctx.seenIds.add(p.id); }
   if (ctx.date && p.date !== ctx.date) fail(`date '${p.date}' != expected '${ctx.date}'`);
   if (ctx.diff && p.difficulty !== ctx.diff) fail(`difficulty '${p.difficulty}' != expected '${ctx.diff}'`);
+
+  if (!LANGS.includes(p?.language)) fail(`language '${p?.language}' not supported`);
 
   const files = p?.snippet?.files;
   if (!Array.isArray(files) || files.length === 0) { fail("snippet.files missing"); return { errors, warnings }; }
@@ -76,7 +81,7 @@ export function validatePuzzle(p, ctx = {}) {
     if (opts.length < 3) fail("fix needs >= 3 options");
     if (!(fx.answerIndex >= 0 && fx.answerIndex < opts.length)) fail("fix.answerIndex out of range");
     opts.forEach((o, i) => {
-      if (!o.label || !o.diff) fail(`fix option ${i} missing label/diff`);
+      if (!o.label || typeof o.diff !== "string" || !o.diff) fail(`fix option ${i} missing label/diff`);
       if (i === fx.answerIndex && o.whyWrong) warn(`correct fix option ${i} has a whyWrong`);
       if (i !== fx.answerIndex && !o.whyWrong) warn(`wrong fix option ${i} has no whyWrong`);
     });
@@ -90,6 +95,9 @@ export function validatePuzzle(p, ctx = {}) {
     if (!src.advisory) fail("cve origin requires source.advisory");
     if (!src.fixCommit) warn("cve origin: no source.fixCommit");
   }
+
+  for (const [k, u] of [["source.advisory", src?.advisory], ["source.fixCommit", src?.fixCommit]]) if (u && !isHttps(u)) fail(`${k} must be an https URL`);
+  for (const r of p.writeup?.readNext || []) if (!isHttps(r?.url)) fail(`writeup.readNext url '${r?.url}' must be https`);
 
   if (!p.writeup?.summary) fail("writeup.summary missing");
   return { errors, warnings };

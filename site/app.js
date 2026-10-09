@@ -58,12 +58,20 @@ function bumpStreak(date) {
   try { localStorage.setItem(SKEY, JSON.stringify(s)); } catch {}
   return s;
 }
-function renderStreak() { const s = getStreak(); $("streak").textContent = `🔥 ${s.cur}` + (s.max > s.cur ? ` / ${s.max}` : ""); }
+function renderStreak() {
+  const s = getStreak();
+  // A streak whose last play is older than yesterday has lapsed, even if not yet overwritten.
+  const y = new Date(localToday() + "T00:00:00Z"); y.setUTCDate(y.getUTCDate() - 1);
+  const cur = s.last && s.last >= y.toISOString().slice(0, 10) ? s.cur : 0;
+  $("streak").textContent = `🔥 ${cur}` + (s.max > cur ? ` / ${s.max}` : "");
+}
 
 // ---- helpers ---------------------------------------------------------------
 const LANG_LABEL = { python: "Python", csharp: "C#", c: "C", cpp: "C++", javascript: "JavaScript", go: "Go", java: "Java", ruby: "Ruby", php: "PHP", rust: "Rust" };
 const SYM = { green: "🟩", yellow: "🟨", grey: "⬜" };
-function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+// Puzzle content is LLM-generated; only ever emit http(s) links from it.
+function safeUrl(u) { try { const x = new URL(u); return x.protocol === "https:" || x.protocol === "http:" ? escapeHtml(x.href) : null; } catch { return null; } }
 function mdLite(s) { return escapeHtml(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>"); }
 function fileLines(f) { const a = f.code.split("\n"); if (a.length && a[a.length - 1] === "") a.pop(); return a; }
 
@@ -75,7 +83,7 @@ function renderMeta(p) {
       (p.source.project ? `<span class="pill">${escapeHtml(p.source.project)}</span>` : "")
     : "";
   $("meta").innerHTML =
-    `<span class="pill">${LANG_LABEL[p.language] || p.language}</span>` +
+    `<span class="pill">${escapeHtml(LANG_LABEL[p.language] || p.language)}</span>` +
     `<span class="pill">~${p.estimatedMinutes || "?"} min</span>` + src;
   $("reportLink").href = `https://github.com/ArtSydney/SourceReadle/issues/new?title=${encodeURIComponent("Puzzle issue: " + p.id)}&body=${encodeURIComponent("Puzzle: " + p.id + "\n\nWhat's wrong:")}`;
 }
@@ -97,10 +105,8 @@ function renderCode(p, prog) {
       const lineNo = i + 1;
       const row = document.createElement("div");
       row.className = "coderow";
-      if (f.name === ans.file) {
-        const g = prog.lineGuesses.find((x) => x.line === lineNo);
-        if (g) row.classList.add("g-" + g.result);
-      }
+      const g = prog.lineGuesses.find((x) => x.line === lineNo && (x.file || ans.file) === f.name);
+      if (g) row.classList.add("g-" + g.result);
       if (prog.stage > 1 && f.name === ans.file && lineNo === ans.line) row.classList.add("reveal");
       if (state.explain && state.selectedNote && state.selectedNote.file === f.name && state.selectedNote.line === lineNo) row.classList.add("noted");
       if (f.notes && f.notes[String(lineNo)]) row.classList.add("has-note");
@@ -150,7 +156,7 @@ function renderStage(p, prog) {
     const rb = $("revealLine"); if (rb) rb.addEventListener("click", () => { prog.stage = 2; persistAndRender(); });
   } else if (prog.stage === 2) {
     const opts = p.stages.bugClass.options.map((c) =>
-      `<button class="opt${classStateClass(prog, c)}" data-class="${c}">${escapeHtml(TAX.classes[c].label)}</button>`).join("");
+      `<button class="opt${classStateClass(prog, c)}" data-class="${escapeHtml(c)}">${escapeHtml(TAX.classes[c]?.label || c)}</button>`).join("");
     el.innerHTML = `<h2>Stage 2 of 4 — Name the bug class</h2>` +
       `<p class="hint">What kind of vulnerability is it? 🟨 = right family, wrong class.</p>` +
       hintBtn("bugClass") + `<div class="options">${opts}</div>`;
@@ -206,14 +212,14 @@ function diffHtml(diff) {
 // ---- actions ---------------------------------------------------------------
 function guessLine(line, file) {
   const p = state.puzzle, prog = state.prog, ans = p.stages.line;
-  if (prog.stage !== 1 || prog.lineGuesses.some((g) => g.line === line && (file || ans.file) === ans.file)) {
-    if (prog.lineGuesses.some((g) => g.line === line)) return;
-  }
-  const sameFile = !file || file === ans.file;
+  if (prog.stage !== 1) return;
+  const f = file || ans.file;
+  if (prog.lineGuesses.some((g) => g.line === line && (g.file || ans.file) === f)) return;
+  const sameFile = f === ans.file;
   let result = "grey";
   if (sameFile && line === ans.line) result = "green";
   else if (sameFile && Math.abs(line - ans.line) <= ans.yellowRadius) result = "yellow";
-  prog.lineGuesses.push({ line, result });
+  prog.lineGuesses.push({ line, file: f, result });
   if (result === "green") { prog.lineSolved = true; prog.stage = 2; }
   else if (!prog.learn && prog.lineGuesses.length >= ans.maxGuesses) { prog.stage = 2; }
   persistAndRender();
@@ -222,7 +228,7 @@ function guessClass(c) {
   const p = state.puzzle, prog = state.prog, ans = p.stages.bugClass.answer;
   if (prog.classResult) return;
   prog.classPick = c; prog.puzzleAnswerClass = ans;
-  prog.classResult = (c === ans) ? "green" : (TAX.classes[c].family === TAX.classes[ans].family ? "yellow" : "grey");
+  prog.classResult = (c === ans) ? "green" : (TAX.classes[c]?.family && TAX.classes[c].family === TAX.classes[ans]?.family ? "yellow" : "grey");
   prog.stage = 3; persistAndRender();
 }
 function guessWhy(i) {
@@ -238,7 +244,7 @@ function guessFix(i) {
   prog.fixPick = i;
   prog.fixResult = (i === p.stages.fix.answerIndex) ? "green" : "grey";
   prog.stage = 5; prog.completedAt = new Date().toISOString();
-  if (!prog.learn) bumpStreak(p.date);
+  if (!prog.learn && !prog.usedLearn && state.date === localToday()) bumpStreak(state.date);
   persistAndRender();
 }
 function persistAndRender() { saveProgress(progKey(), state.prog); render(); }
@@ -259,7 +265,8 @@ function renderResult(p, prog) {
   el.classList.remove("hidden");
   const win = prog.lineSolved && prog.classResult === "green" && prog.whyResult === "green" && prog.fixResult === "green";
   const share = shareText(p, prog);
-  const rn = (p.writeup.readNext || []).map((r) => `<a href="${r.url}" target="_blank" rel="noopener">${escapeHtml(r.label)} ↗</a>`).join("");
+  const rn = (p.writeup.readNext || []).map((r) => { const u = safeUrl(r.url); return u ? `<a href="${u}" target="_blank" rel="noopener">${escapeHtml(r.label)} ↗</a>` : ""; }).join("");
+  const fixUrl = safeUrl(p.source.fixCommit), advUrl = safeUrl(p.source.advisory);
   el.innerHTML =
     `<h2>${win ? "Clean sweep 🎉" : "Solved — the breakdown"}</h2>` +
     `<div class="sharegrid">${escapeHtml(share)}</div>` +
@@ -267,8 +274,8 @@ function renderResult(p, prog) {
     (p.training?.exploit ? `<div class="writeup"><h3>What the attack looks like</h3><p>${mdLite(p.training.exploit)}</p></div>` : "") +
     `<div class="writeup"><h3>Why it's vulnerable</h3><p>${mdLite(p.writeup.summary)}</p>` +
     (rn ? `<div class="readnext"><strong>Read next</strong>${rn}</div>` : "") +
-    (p.source.fixCommit ? `<p class="readnext"><a href="${p.source.fixCommit}" target="_blank" rel="noopener">Upstream fix commit ↗</a></p>` :
-      (p.source.advisory ? `<p class="readnext"><a href="${p.source.advisory}" target="_blank" rel="noopener">Advisory ↗</a></p>` : "")) +
+    (fixUrl ? `<p class="readnext"><a href="${fixUrl}" target="_blank" rel="noopener">Upstream fix commit ↗</a></p>` :
+      (advUrl ? `<p class="readnext"><a href="${advUrl}" target="_blank" rel="noopener">Advisory ↗</a></p>` : "")) +
     `</div>`;
   $("shareBtn").addEventListener("click", async () => {
     const text = share + "\n" + location.href;
@@ -329,7 +336,7 @@ function populateLangs() {
   const list = [...langs].sort();
   if (state.lang && !list.includes(state.lang)) state.lang = "";
   $("langSelect").innerHTML = `<option value="">All languages</option>` +
-    list.map((l) => `<option value="${l}">${LANG_LABEL[l] || l}</option>`).join("");
+    list.map((l) => `<option value="${escapeHtml(l)}">${escapeHtml(LANG_LABEL[l] || l)}</option>`).join("");
   $("langSelect").value = state.lang;
 }
 
@@ -372,6 +379,7 @@ function wire() {
   $("explainBtn").addEventListener("click", () => { state.explain = !state.explain; if (!state.explain) $("notePanel").classList.add("hidden"); render(); });
   $("learnBtn").addEventListener("click", () => {
     const now = !state.prog.learn; setLearn(now); state.prog.learn = now;
+    if (now && state.prog.stage < 5) state.prog.usedLearn = true;   // hints/reveals seen: no streak credit
     saveProgress(progKey(), state.prog); render();
   });
 }

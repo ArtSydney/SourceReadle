@@ -7,11 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Least privilege: each job gets only what it needs (see per-job blocks).
 permissions:
   contents: read
-  pages: write
-  id-token: write
-  issues: write
 
 concurrency:
   group: pages
@@ -40,6 +38,9 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -50,6 +51,9 @@ jobs:
   backlog:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -4,7 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
-import { join, extname, dirname, normalize } from "node:path";
+import { join, extname, dirname, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -30,11 +30,11 @@ createServer(async (req, res) => {
     let p = decodeURIComponent(req.url.split("?")[0]);
     if (p === "/") p = "/index.html";
     const full = normalize(join(out, p));
-    if (!full.startsWith(out)) { res.writeHead(403).end("forbidden"); return; }
+    if (!full.startsWith(out + sep)) { res.writeHead(403).end("forbidden"); return; }
     const body = await readFile(full);
     res.writeHead(200, { "content-type": TYPES[extname(full)] || "application/octet-stream", "cache-control": "no-cache" });
     res.end(body);
   } catch {
     res.writeHead(404, { "content-type": "text/plain" }).end("not found");
   }
-}).listen(port, () => console.log(`SourceReadle dev server → http://localhost:${port}`));
+}).listen(port, "127.0.0.1", () => console.log(`SourceReadle dev server → http://localhost:${port}`));

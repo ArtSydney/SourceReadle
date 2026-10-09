@@ -60,6 +60,8 @@ function stripFences(t) { return t.replace(/^```(?:json)?\s*/i, "").replace(/\s*
 // recognizable prefix for teaching but break the scanner's pattern.
 const SECRET_SUBS = [
   [/\b([sprk]k)_(live|test)_[A-Za-z0-9]{6,}/g, "$1_$2_EXAMPLE_not_a_real_key"],
+  [/\bsk-ant-[A-Za-z0-9_\-]{10,}/g, "sk-ant-EXAMPLE-not-a-real-key"],
+  [/\bsk-(?:proj-)?[A-Za-z0-9]{20,}/g, "sk-EXAMPLE-not-a-real-key"],
   [/\bAKIA[0-9A-Z]{6,}/g, "AKIA_EXAMPLE_NOT_REAL"],
   [/\bgh[pousr]_[A-Za-z0-9]{10,}/g, "ghp_EXAMPLE_not_a_real_token"],
   [/\bAIza[0-9A-Za-z_\-]{10,}/g, "AIza_EXAMPLE_not_real_key"],
