@@ -41,6 +41,8 @@ Requirements for THIS puzzle:
 - writeup.summary: 3-6 sentences. writeup.readNext: 1-2 real reference links.
 - Pick a vulnerability class you have not already been asked about recently; vary languages and classes.
 
+Keep it tight so the JSON stays complete: the snippet file is at most 35 lines, at most ~12 notes, each fix "diff" at most ~8 lines, and each label/explanation one or two sentences.
+
 Output STRICTLY valid JSON. Because code and diffs are arrays of line strings, no string in your output should contain a raw newline. Return only the JSON object.`;
 }
 
@@ -77,11 +79,13 @@ export async function draftOne({ diff, idNum, date, key, model, fake, catalog })
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model, max_tokens: diff === "hard" ? 16000 : 10000, messages: [{ role: "user", content: buildPrompt(diff, idNum, date) }] }),
+      body: JSON.stringify({ model, max_tokens: diff === "hard" ? 32000 : 12000, messages: [{ role: "user", content: buildPrompt(diff, idNum, date) }] }),
     });
     if (!res.ok) throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data = await res.json();
-    obj = JSON.parse(stripFences((data.content || []).map((b) => b.text || "").join("")));
+    const raw = stripFences((data.content || []).map((b) => b.text || "").join(""));
+    try { obj = JSON.parse(raw); }
+    catch (e) { throw new Error(`${e.message} | stop=${data.stop_reason} len=${raw.length} tail=${JSON.stringify(raw.slice(-70))}`); }
   }
   // The model returns code/diffs as arrays of lines (far more reliable JSON);
   // join them into the newline strings the schema and player expect.
