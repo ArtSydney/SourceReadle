@@ -9,7 +9,7 @@ should read this file first, find **NOW / NEXT**, and continue. Update the
 ## Resume pointer
 
 - **NOW:** _nothing in progress_
-- **NEXT:** `T0.1` (First-run tutorial) — see Phase 0.
+- **NEXT:** `T0.2` (Intro tier below Easy) — see Phase 0.
 - **Last updated:** 2026-10-10
 
 When you finish a task: tick its box, move the pointer to the next task, add a one-line
@@ -70,9 +70,7 @@ GitHub Pages; only Phases 4 & 6 require introducing a backend.**
 
 Small, self-contained, each ~one session. Do these first to build momentum and fix the leakiest parts of the funnel.
 
-- [ ] **T0.1 — First-run tutorial.** A dismissible, 4-step interactive overlay the first time someone loads the site (localStorage flag), walking through the four stages on a trivial sample.
-  - Steps: design copy for 4 steps; build an overlay component in `site/`; gate on `localStorage` `seenTutorial`; add a "?" button to replay it.
-  - Accept: a brand-new visitor is guided through one full solve; returning visitors never see it unless they tap "?".
+- [x] **T0.1 — First-run tutorial.** ✅ Done. 5-step overlay (welcome + the 4 stages) shown on first load, gated on `localStorage` `sourcereadle:tutorial:v1`; "?" button in the header replays it; Back/Next/Skip/Esc; mobile-tested. Files: `site/index.html`, `site/style.css`, `site/app.js` (wireTutorial/openTutorial/maybeShowTutorial).
 - [ ] **T0.2 — Intro tier (below Easy).** An "Intro" difficulty with heavy scaffolding (bug pre-highlighted, 2 options per stage).
   - Steps: extend taxonomy/schema to allow `difficulty: "intro"` (or a per-puzzle `scaffold` flag); add tab; author/generate 5 intro puzzles.
   - Accept: a non-expert can complete an Intro puzzle with near-100% success and learn one concept.
@@ -155,3 +153,4 @@ Do **Phase 0** now (cheap, fixes the funnel). Then **Phase 1** (trust) because i
 ## Changelog
 
 - 2026-10-10 — Roadmap created.
+- 2026-10-10 — T0.1 first-run tutorial shipped (5-step overlay + "?" replay).

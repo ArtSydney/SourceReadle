@@ -371,7 +371,47 @@ async function load() {
   render();
 }
 
+// ---- first-run tutorial ----------------------------------------------------
+const TKEY = "sourcereadle:tutorial:v1";
+let tutIndex = 0;
+const TUT_STEPS = [
+  { title: "Welcome to SourceReadle", body:
+    `<p>Find the hidden security bug in a short piece of real code — a new puzzle every day.</p>
+     <p class="muted">Four quick stages. Here's how each one works.</p>` },
+  { title: "1 · Find the line", body:
+    `<p>Tap the line of code where the vulnerability lives.</p>
+     <div class="glyphs">🟩 🟨 ⬜</div>
+     <p class="muted">🟩 exact &nbsp;·&nbsp; 🟨 within a few lines &nbsp;·&nbsp; ⬜ cold. You get 5 taps.</p>` },
+  { title: "2 · Name the bug class", body:
+    `<p>What <em>kind</em> of flaw is it — SQL injection, path traversal, use-after-free…?</p>
+     <p class="muted">🟨 means the right family but the wrong specific class.</p>` },
+  { title: "3 · Why is it exploitable?", body:
+    `<p>Pick the explanation of how an attacker actually abuses it.</p>
+     <p class="muted">This is the part that makes you better — understand the mechanism, not just spot it.</p>` },
+  { title: "4 · Pick the fix", body:
+    `<p>One patch truly closes the hole; the others look right but don't.</p>
+     <p class="muted">Stuck? Tap <strong>🔍 Explain</strong> to see what any line does, or <strong>🎓 Learn</strong> for hints with no streak pressure. Tap <strong>?</strong> anytime to replay this.</p>` },
+];
+function renderTut() {
+  const s = TUT_STEPS[tutIndex];
+  $("tutBody").innerHTML = `<h2>${s.title}</h2>${s.body}`;
+  $("tutDots").innerHTML = TUT_STEPS.map((_, i) => `<span class="dot${i === tutIndex ? " on" : ""}"></span>`).join("");
+  $("tutNext").textContent = tutIndex === TUT_STEPS.length - 1 ? "Play ▶" : "Next";
+  $("tutBack").style.visibility = tutIndex === 0 ? "hidden" : "visible";
+}
+function openTutorial() { tutIndex = 0; $("tutorial").classList.remove("hidden"); renderTut(); }
+function closeTutorial() { $("tutorial").classList.add("hidden"); try { localStorage.setItem(TKEY, "1"); } catch {} }
+function wireTutorial() {
+  $("helpBtn").addEventListener("click", openTutorial);
+  $("tutSkip").addEventListener("click", closeTutorial);
+  $("tutBack").addEventListener("click", () => { if (tutIndex > 0) { tutIndex--; renderTut(); } });
+  $("tutNext").addEventListener("click", () => { if (tutIndex < TUT_STEPS.length - 1) { tutIndex++; renderTut(); } else closeTutorial(); });
+  document.addEventListener("keydown", (e) => { if (!$("tutorial").classList.contains("hidden") && e.key === "Escape") closeTutorial(); });
+}
+function maybeShowTutorial() { let seen; try { seen = localStorage.getItem(TKEY); } catch {} if (!seen) openTutorial(); }
+
 function wire() {
+  wireTutorial();
   document.querySelectorAll("#difftabs button").forEach((b) => b.addEventListener("click", () => { state.diff = b.dataset.diff; load(); }));
   $("prevDay").addEventListener("click", () => { const pd = playableDates(); const i = pd.indexOf(state.date); if (i > 0) { state.date = pd[i - 1]; load(); } });
   $("nextDay").addEventListener("click", () => { const pd = playableDates(); const i = pd.indexOf(state.date); if (i >= 0 && i < pd.length - 1) { state.date = pd[i + 1]; load(); } });
@@ -394,5 +434,6 @@ async function main() {
   if (!state.date) { state.lang = ""; setLangPref(""); state.date = resolveDate(maxPlayable()); }  // bad pref -> reset
   wire();
   await load();
+  maybeShowTutorial();
 }
 main().catch((e) => { $("codePanel").innerHTML = `<div class="filename">Failed to load: ${escapeHtml(String(e.message || e))}</div>`; });

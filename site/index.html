@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SourceReadle</title>
   <meta name="description" content="A daily code-reading puzzle: find the vulnerability, name its class, pick the fix." />
-  <link rel="stylesheet" href="style.css?v=4" />
+  <link rel="stylesheet" href="style.css?v=5" />
 </head>
 <body>
   <header class="topbar">
+    <button id="helpBtn" class="help" title="How to play" aria-label="How to play">?</button>
     <div class="brand">
       <span class="logo">&lt;/&gt;</span>
       <h1>SourceReadle</h1>
@@ -51,6 +52,18 @@
     <a id="reportLink" href="#" target="_blank" rel="noopener">Report this puzzle 👎</a>
   </footer>
 
-  <script src="app.js?v=4"></script>
+  <div class="tut hidden" id="tutorial" role="dialog" aria-modal="true" aria-label="How to play">
+    <div class="tut-card">
+      <button class="tut-skip" id="tutSkip">Skip</button>
+      <div class="tut-body" id="tutBody"></div>
+      <div class="tut-nav">
+        <button class="btn secondary" id="tutBack">Back</button>
+        <div class="tut-dots" id="tutDots"></div>
+        <button class="btn" id="tutNext">Next</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=5"></script>
 </body>
 </html>

@@ -34,6 +34,21 @@ body {
 .logo { font-family: var(--mono); color: var(--accent); font-weight: 700; font-size: 15px; }
 .topbar h1 { font-size: 20px; margin: 0; font-weight: 800; letter-spacing: 3px; text-transform: uppercase; }
 .streak { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); font-variant-numeric: tabular-nums; font-size: 14px; color: var(--muted); }
+.help { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border); background: var(--panel); color: var(--muted); font-weight: 700; font-size: 14px; cursor: pointer; line-height: 1; }
+.help:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---- first-run tutorial ---- */
+.tut { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.55); padding: 16px; }
+.tut-card { position: relative; width: 100%; max-width: 440px; background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 24px 20px 16px; box-shadow: 0 24px 64px rgba(0,0,0,.45); }
+.tut-skip { position: absolute; right: 14px; top: 12px; background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; font-size: 13px; }
+.tut-body h2 { margin: 2px 0 10px; font-size: 19px; }
+.tut-body p { font-size: 14.5px; margin: 0 0 10px; }
+.tut-body .glyphs { font-size: 22px; letter-spacing: 6px; margin: 10px 0; }
+.tut-body .muted { color: var(--muted); font-size: 13px; }
+.tut-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 18px; }
+.tut-dots { display: flex; gap: 6px; }
+.tut-dots .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+.tut-dots .dot.on { background: var(--accent); }
 
 .controls {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
