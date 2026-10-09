@@ -21,9 +21,10 @@
   }
 }
 * { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
-  font-family: var(--sans); line-height: 1.45;
+  font-family: var(--sans); line-height: 1.45; overflow-x: hidden;
 }
 .topbar {
   position: relative; display: flex; align-items: center; justify-content: center;
@@ -123,22 +124,41 @@ code { font-family: var(--mono); background: rgba(127,127,127,0.15); padding: 1p
 
 /* ---- mobile (iOS Safari / Chrome) ---- */
 @media (max-width: 640px) {
-  .topbar { position: sticky; top: 0; z-index: 10; padding: 10px 12px; }
-  .topbar h1 { font-size: 16px; }
-  .controls { padding: 10px 12px; gap: 10px; }
-  .datenav { width: 100%; justify-content: space-between; }
-  #dateLabel { min-width: 0; flex: 1; }
-  .difftabs { width: 100%; }
-  .difftabs button { flex: 1; padding: 10px 0; }
-  .modes { width: 100%; }
-  .modes .toggle { flex: 1; padding: 10px 0; }
-  main { padding: 0 12px 32px; }
-  .code { font-size: 12.5px; -webkit-overflow-scrolling: touch; }
-  .coderow .ln { width: 38px; padding-top: 4px; padding-bottom: 4px; }
-  .coderow .src { padding-top: 4px; padding-bottom: 4px; }
-  .opt { padding: 14px 12px; }           /* bigger finger targets */
-  .difftabs button, .datenav button, .toggle { min-height: 44px; }
+  .topbar { position: sticky; top: 0; z-index: 10; padding: 11px 12px; }
+  .brand { gap: 7px; }
+  .logo { font-size: 13px; }
+  .topbar h1 { font-size: 15px; letter-spacing: 1.5px; }
+  .streak { right: 12px; font-size: 13px; }
+
+  .controls { padding: 10px 12px 4px; gap: 8px; }
+  .datenav { width: 100%; justify-content: space-between; gap: 6px; }
+  .datenav button { padding: 8px 14px; }
+  #dateLabel { min-width: 0; flex: 1; font-size: 13px; }
+  .todaytag { font-size: 10px; padding: 1px 5px; }
+
+  .difftabs { width: 100%; gap: 6px; }
+  .difftabs button { flex: 1; padding: 9px 0; font-size: 14px; }
+
+  .modes { width: 100%; flex-wrap: wrap; gap: 6px; }
+  .lang { flex: 1 1 100%; padding: 9px 8px; font-size: 13px; }   /* full-width row */
+  .modes .toggle { flex: 1; font-size: 13px; }                   /* Explain | Learn split */
+
+  main { padding: 0 12px 34px; }
+  .meta { font-size: 11px; gap: 6px; margin: 2px 0 12px; }
+
+  .code { font-size: 11.5px; -webkit-overflow-scrolling: touch; border-radius: 10px; }
+  .filename { padding: 7px 12px; font-size: 11px; }
+  .coderow .ln { width: 30px; padding: 3px 7px 3px 0; }
+  .coderow .src { padding: 3px 10px; }
+
+  .stage, .result, .note { padding: 13px; margin-top: 12px; }
   .stage h2 { font-size: 15px; }
+  .stage .hint { font-size: 12.5px; }
+  .guessdots { font-size: 20px; }
+  .opt { padding: 13px 12px; }
+  .foot { padding: 14px 12px; flex-direction: column; gap: 6px; }
+
+  .difftabs button, .datenav button, .modes .toggle, .lang { min-height: 44px; }
 }
 /* respect notches */
 @supports (padding: max(0px)) {
