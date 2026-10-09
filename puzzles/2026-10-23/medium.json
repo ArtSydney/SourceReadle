@@ -1,0 +1,125 @@
+{
+  "id": "srd-0044",
+  "date": "2026-10-23",
+  "difficulty": "medium",
+  "language": "go",
+  "estimatedMinutes": 15,
+  "snippet": {
+    "files": [
+      {
+        "name": "auth.go",
+        "code": "package main\n\nimport (\n\t\"crypto/rand\"\n\t\"crypto/subtle\"\n\t\"encoding/hex\"\n\t\"log\"\n\t\"net/http\"\n\t\"strings\"\n\t\"sync\"\n\t\"time\"\n)\n\ntype User struct {\n\tName     string\n\tPassHash []byte\n}\n\ntype session struct {\n\tuser    string\n\texpires time.Time\n}\n\ntype SessionStore struct {\n\tmu   sync.Mutex\n\tbyID map[string]session\n}\n\n// Create issues a new random session token for the user.\nfunc (s *SessionStore) Create(user string, ttl time.Duration) string {\n\tbuf := make([]byte, 32)\n\tif _, err := rand.Read(buf); err != nil {\n\t\tpanic(err)\n\t}\n\ttoken := hex.EncodeToString(buf)\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\ts.byID[token] = session{user: user, expires: time.Now().Add(ttl)}\n\treturn token\n}\n\ntype Server struct {\n\tusers    map[string]User\n\tsessions *SessionStore\n\thash     func(string) []byte\n}\n\n// safeNext picks the page to show after login, defaulting to the dashboard.\nfunc safeNext(raw string) string {\n\tif raw == \"\" {\n\t\treturn \"/dashboard\"\n\t}\n\t// Only allow local paths, never other sites.\n\tif strings.HasPrefix(raw, \"/\") {\n\t\treturn raw\n\t}\n\treturn \"/dashboard\"\n}\n\nfunc (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {\n\tif r.Method != http.MethodPost {\n\t\thttp.Error(w, \"method not allowed\", http.StatusMethodNotAllowed)\n\t\treturn\n\t}\n\tif err := r.ParseForm(); err != nil {\n\t\thttp.Error(w, \"bad request\", http.StatusBadRequest)\n\t\treturn\n\t}\n\tname := r.PostForm.Get(\"username\")\n\tpass := r.PostForm.Get(\"password\")\n\tuser, ok := s.users[name]\n\tcandidate := s.hash(pass)\n\tif !ok || subtle.ConstantTimeCompare(candidate, user.PassHash) != 1 {\n\t\tlog.Printf(\"failed login for user %q\", name)\n\t\thttp.Redirect(w, r, \"/login?error=1\", http.StatusSeeOther)\n\t\treturn\n\t}\n\ttoken := s.sessions.Create(user.Name, 12*time.Hour)\n\thttp.SetCookie(w, &http.Cookie{\n\t\tName:     \"sid\",\n\t\tValue:    token,\n\t\tPath:     \"/\",\n\t\tHttpOnly: true,\n\t\tSecure:   true,\n\t\tSameSite: http.SameSiteLaxMode,\n\t\tMaxAge:   12 * 3600,\n\t})\n\thttp.Redirect(w, r, safeNext(r.FormValue(\"next\")), http.StatusSeeOther)\n}",
+        "notes": {
+          "28": "Generates a session token from 32 random bytes and stores it with an expiry.",
+          "48": "Helper that decides where the browser is sent after a successful login.",
+          "50": "An empty 'next' value falls back to the dashboard.",
+          "53": "Comment describing the intent of the check below.",
+          "54": "Accepts the caller-supplied destination under a condition on its first character.",
+          "60": "POST-only login handler.",
+          "71": "Looks up the user record by submitted username.",
+          "73": "Compares password hashes in constant time; unknown users also fail.",
+          "74": "Logs the failed attempt using %q quoting.",
+          "79": "Sets the session cookie with HttpOnly, Secure and SameSite=Lax.",
+          "88": "Redirects the browser to the destination chosen by safeNext, using the 'next' form or query value."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "auth.go",
+      "line": 54,
+      "yellowRadius": 3,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "open-redirect",
+      "options": [
+        "open-redirect",
+        "ssrf",
+        "path-traversal",
+        "auth-bypass",
+        "log-inj",
+        "idor"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "A 'next' value containing CR/LF characters can inject extra HTTP response headers into the redirect.",
+          "whyWrong": "Go's http.Redirect and header handling do not allow raw CR/LF to split the response, and the real flaw is where the browser is sent, not header structure."
+        },
+        {
+          "label": "A value beginning with '//' (e.g. //evil.example) passes the HasPrefix(\"/\") test but browsers treat it as a scheme-relative URL pointing at another host, so the user is sent off-site after login.",
+          "whyWrong": ""
+        },
+        {
+          "label": "The server fetches the 'next' URL itself, letting an attacker make it request internal services.",
+          "whyWrong": "The server never fetches the URL; it only returns it in a Location header for the client's browser to follow."
+        },
+        {
+          "label": "An empty 'next' value falls through to the dashboard, letting unauthenticated users reach it.",
+          "whyWrong": "The default only applies after credentials were verified, and it is a fixed local path, so it grants nothing."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "Reject any value containing \"://\"",
+          "diff": "-\tif strings.HasPrefix(raw, \"/\") {\n+\tif strings.HasPrefix(raw, \"/\") && !strings.Contains(raw, \"://\") {\n\t\treturn raw\n\t}",
+          "whyWrong": "Scheme-relative URLs like //evil.example contain no \"://\", so the bypass still works."
+        },
+        {
+          "label": "Require the value to mention our own domain",
+          "diff": "-\tif strings.HasPrefix(raw, \"/\") {\n+\tif strings.Contains(raw, \"example.com\") {\n\t\treturn raw\n\t}",
+          "whyWrong": "Substring checks are trivially bypassed, e.g. https://evil.test/example.com, and it also drops the local-path guarantee."
+        },
+        {
+          "label": "Require a single leading slash, not '//' or '/\\'",
+          "diff": "-\tif strings.HasPrefix(raw, \"/\") {\n+\tif strings.HasPrefix(raw, \"/\") && !strings.HasPrefix(raw, \"//\") && !strings.HasPrefix(raw, \"/\\\\\") {\n\t\treturn raw\n\t}"
+        },
+        {
+          "label": "Change the redirect status from 303 to 302",
+          "diff": "-\thttp.Redirect(w, r, safeNext(r.FormValue(\"next\")), http.StatusSeeOther)\n+\thttp.Redirect(w, r, safeNext(r.FormValue(\"next\")), http.StatusFound)",
+          "whyWrong": "The status code only changes how the follow-up request is made; the browser still navigates to the attacker's host."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "An attacker emails a victim a link to the real login page such as https://app.example/login?next=//evil.example/login. The victim logs in with valid credentials and the handler calls safeNext(\"//evil.example/login\"). The value starts with '/', so it is returned unchanged and sent in the Location header. The browser resolves it as https://evil.example/login, where a look-alike page says 'session expired, please re-enter your password' and harvests the credentials.",
+    "concepts": [
+      "CWE-601",
+      "OWASP A01:2021",
+      "Scheme-relative URLs",
+      "Allow-list validation"
+    ],
+    "hints": {
+      "line": "Look at how the post-login destination is validated. What does the check actually promise about the string?",
+      "bugClass": "The user's browser ends up somewhere the app didn't intend. Think about who follows the URL: the server or the client?",
+      "why": "Which strings begin with '/' but are not local paths? Consider how browsers parse URLs that start with two slashes.",
+      "fix": "A good fix rejects every form that can name another host, not just the obvious https:// ones."
+    }
+  },
+  "writeup": {
+    "summary": "The login handler tries to restrict the `next` parameter to local paths, but it only checks that the string starts with `/`. A value like `//evil.example` or `/\\evil.example` passes that check, yet browsers read it as a scheme-relative URL for another host. An attacker can therefore craft a legitimate-looking login link that sends the victim to a phishing page right after authentication, when they are most likely to trust it. The fix rejects a leading `//` or `/\\`, so only genuine same-origin paths are accepted. A stricter approach is to parse the URL and require an empty scheme and host, or to map redirect targets from a fixed allow-list of known pages.",
+    "readNext": [
+      {
+        "label": "OWASP Unvalidated Redirects and Forwards Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"
+      },
+      {
+        "label": "CWE-601: URL Redirection to Untrusted Site ('Open Redirect')",
+        "url": "https://cwe.mitre.org/data/definitions/601.html"
+      }
+    ]
+  }
+}

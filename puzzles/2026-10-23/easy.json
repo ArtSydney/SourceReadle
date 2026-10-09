@@ -1,0 +1,119 @@
+{
+  "id": "srd-0043",
+  "date": "2026-10-23",
+  "difficulty": "easy",
+  "language": "go",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "login.go",
+        "code": "func LoginHandler(w http.ResponseWriter, r *http.Request) {\n\tif err := r.ParseForm(); err != nil {\n\t\thttp.Error(w, \"bad request\", http.StatusBadRequest)\n\t\treturn\n\t}\n\tuser := r.PostForm.Get(\"user\")\n\tpass := r.PostForm.Get(\"pass\")\n\tsess, err := auth.Authenticate(user, pass)\n\tif err != nil {\n\t\thttp.Error(w, \"invalid credentials\", http.StatusUnauthorized)\n\t\treturn\n\t}\n\thttp.SetCookie(w, &http.Cookie{Name: \"sid\", Value: sess.ID, HttpOnly: true, Secure: true})\n\n\tnext := r.URL.Query().Get(\"next\")\n\tif next == \"\" || !strings.HasPrefix(next, \"/\") {\n\t\tnext = \"/dashboard\"\n\t}\n\thttp.Redirect(w, r, next, http.StatusSeeOther)\n}",
+        "notes": {
+          "2": "Parses the request body and query string into form values.",
+          "8": "Checks the submitted credentials and returns a session on success.",
+          "13": "Stores the session id in a cookie that is HTTP-only and Secure.",
+          "15": "Reads the optional 'next' query parameter, which says where to send the user after login.",
+          "16": "Falls back to the default page when 'next' is missing or fails a check.",
+          "19": "Sends a 303 response whose Location header is the chosen target."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "login.go",
+      "line": 16,
+      "yellowRadius": 3,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "open-redirect",
+      "options": [
+        "open-redirect",
+        "ssrf",
+        "path-traversal",
+        "auth-bypass",
+        "missing-authz",
+        "log-inj"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "The Secure cookie flag stops the session cookie being set over HTTP, so the user can be tricked into logging in again.",
+          "whyWrong": "The cookie flags are set correctly and are unrelated to where the user is redirected."
+        },
+        {
+          "label": "A prefix check for \"/\" also accepts values like \"//evil.example\" or \"/\\evil.example\". Browsers read these as scheme-relative URLs pointing at another host, so the redirect after login can go to an attacker's site.",
+          "whyWrong": null
+        },
+        {
+          "label": "Reading 'next' from the query string instead of the POST body lets the server fetch an attacker-chosen URL from inside the network.",
+          "whyWrong": "The server never fetches the URL. It only hands it to the browser, so this is not SSRF."
+        },
+        {
+          "label": "The redirect uses status 303 instead of 302, which lets the attacker replay the POST request against another site.",
+          "whyWrong": "303 makes the browser follow with a GET. The status code is not the problem."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "Reject any 'next' value containing \"://\"",
+          "diff": " \tnext := r.URL.Query().Get(\"next\")\n-\tif next == \"\" || !strings.HasPrefix(next, \"/\") {\n+\tif next == \"\" || !strings.HasPrefix(next, \"/\") || strings.Contains(next, \"://\") {\n \t\tnext = \"/dashboard\"\n \t}",
+          "whyWrong": "\"//evil.example\" contains no \"://\", so it still passes and the browser still treats it as an external host."
+        },
+        {
+          "label": "Parse the URL and only reject when it has a scheme",
+          "diff": " \tnext := r.URL.Query().Get(\"next\")\n+\tu, perr := url.Parse(next)\n-\tif next == \"\" || !strings.HasPrefix(next, \"/\") {\n+\tif next == \"\" || perr != nil || u.Scheme != \"\" {\n \t\tnext = \"/dashboard\"\n \t}",
+          "whyWrong": "\"//evil.example/x\" parses with an empty scheme but a non-empty Host, so it passes this check. The check also now accepts values with no leading slash."
+        },
+        {
+          "label": "Also reject values starting with \"//\" or \"/\\\"",
+          "diff": " \tnext := r.URL.Query().Get(\"next\")\n-\tif next == \"\" || !strings.HasPrefix(next, \"/\") {\n+\tif next == \"\" || !strings.HasPrefix(next, \"/\") ||\n+\t\tstrings.HasPrefix(next, \"//\") || strings.HasPrefix(next, \"/\\\\\") {\n \t\tnext = \"/dashboard\"\n \t}"
+        },
+        {
+          "label": "Require that 'next' ends with the site's own domain",
+          "diff": " \tnext := r.URL.Query().Get(\"next\")\n-\tif next == \"\" || !strings.HasPrefix(next, \"/\") {\n+\tif next == \"\" || !strings.HasSuffix(next, \"example.com\") {\n \t\tnext = \"/dashboard\"\n \t}",
+          "whyWrong": "Suffix checks are easy to bypass, for example with \"https://evil.example/?x=example.com\" or \"https://notexample.com\". It also rejects normal relative paths like /dashboard."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "An attacker sends a victim a link such as https://shop.example/login?next=//evil.example/login. The page looks genuine and the victim enters real credentials. The server authenticates them, sets the cookie, and answers with Location: //evil.example/login. The check only tests for a leading \"/\", so it passes. The browser reads the value as a scheme-relative URL and lands on the attacker's lookalike page, which can say 'session expired, please log in again' and capture the credentials a second time.",
+    "concepts": [
+      "CWE-601",
+      "OWASP A01:2021",
+      "URL parsing differentials"
+    ],
+    "hints": {
+      "line": "Look at how the code decides that 'next' is a safe, local destination.",
+      "bugClass": "The user is being sent somewhere an attacker picks, and the server never fetches anything itself.",
+      "why": "Think about what a browser does with a Location header that starts with two slashes.",
+      "fix": "The fix must reject the inputs that look like local paths but resolve to another host."
+    }
+  },
+  "writeup": {
+    "summary": "The login handler redirects to a user-supplied 'next' parameter after checking only that it starts with \"/\". Values like \"//evil.example\" and \"/\\evil.example\" pass that check, but browsers resolve them as scheme-relative URLs to another host. An attacker can therefore make a genuine login page send victims to a phishing site right after they authenticate. The fix rejects values starting with \"//\" or \"/\\\", so only true same-origin paths are accepted. A stricter option is to allow only paths from a known list or to map short tokens to destinations.",
+    "readNext": [
+      {
+        "label": "OWASP Unvalidated Redirects and Forwards Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"
+      },
+      {
+        "label": "CWE-601: URL Redirection to Untrusted Site ('Open Redirect')",
+        "url": "https://cwe.mitre.org/data/definitions/601.html"
+      }
+    ]
+  }
+}
