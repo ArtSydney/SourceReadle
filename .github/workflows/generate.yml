@@ -6,8 +6,11 @@ name: Generate puzzles
 # never breaks. Each draft is self-validated before it's written.
 
 on:
-  schedule:
-    - cron: "0 1 * * 1"      # weekly, Mondays 01:00 UTC — low API usage
+  # On-demand only — no scheduled API spend. Rotation keeps the site fresh
+  # between runs. To make it automatic again, uncomment the schedule below
+  # (weekly Mondays 01:00 UTC).
+  # schedule:
+  #   - cron: "0 1 * * 1"
   workflow_dispatch:
     inputs:
       buffer:
