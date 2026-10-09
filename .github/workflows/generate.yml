@@ -7,13 +7,17 @@ name: Generate puzzles
 
 on:
   schedule:
-    - cron: "0 1 * * *"      # daily 01:00 UTC — tops up the buffer
+    - cron: "0 1 * * 1"      # weekly, Mondays 01:00 UTC — low API usage
   workflow_dispatch:
     inputs:
       buffer:
         description: "Days ahead to keep filled"
         required: false
-        default: "14"
+        default: "21"
+      max_new:
+        description: "Max puzzles to draft this run (caps API calls; 0 = unlimited)"
+        required: false
+        default: "9"
 
 permissions:
   contents: write
@@ -35,7 +39,9 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SRD_MODEL: ${{ vars.SRD_MODEL }}
-          SRD_BUFFER: ${{ github.event.inputs.buffer || vars.SRD_BUFFER || '14' }}
+          SRD_BUFFER: ${{ github.event.inputs.buffer || vars.SRD_BUFFER || '21' }}
+          # Cap puzzles per weekly run. 9 ≈ 3 fresh days/week; the rest rotate. 0 = unlimited.
+          SRD_MAX_NEW: ${{ github.event.inputs.max_new || vars.SRD_MAX_NEW || '9' }}
         run: node scripts/generate-backlog.mjs
 
       - name: Validate everything

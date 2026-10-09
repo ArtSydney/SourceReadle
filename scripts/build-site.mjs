@@ -41,6 +41,7 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 cpSync(join(root, "site"), out, { recursive: true });
 cpSync(join(root, "schema", "taxonomy.json"), join(out, "taxonomy.json"));
+writeFileSync(join(out, ".nojekyll"), "");          // never let Pages run Jekyll on the artifact
 
 // --- load the authored catalog -------------------------------------------------
 const puzzlesSrc = join(root, "puzzles");

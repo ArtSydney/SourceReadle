@@ -21,6 +21,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const puzzlesSrc = join(root, "puzzles");
 const today = process.env.SRD_DATE || new Date().toISOString().slice(0, 10);
 const buffer = parseInt(process.env.SRD_BUFFER || "14", 10);
+const maxNew = parseInt(process.env.SRD_MAX_NEW || "0", 10);   // 0 = unlimited; cap puzzles per run to limit API calls
 const model = process.env.SRD_MODEL || "claude-sonnet-5-5";
 const key = process.env.ANTHROPIC_API_KEY;
 const fake = process.env.SRD_FAKE === "1" || !key;
@@ -51,10 +52,12 @@ for (const diff of DIFFS) for (const o of catalog[diff]) if (o.source?.cve) allC
 const recentClasses = (diff) => catalog[diff].slice(-6).map((o) => o.stages?.bugClass?.answer).filter(Boolean);
 
 let created = 0, skipped = 0, nextId = maxId;
+outer:
 for (let i = 1; i <= buffer; i++) {
   const date = addDays(today, i);
   const usedClass = [], usedLang = [];              // keep the day's 3 puzzles varied
   for (const diff of DIFFS) {
+    if (maxNew && created >= maxNew) break outer;    // per-run cap reached
     const target = join(puzzlesSrc, date, `${diff}.json`);
     if (existsSync(target)) continue;                 // respect authored/already-filled
 
