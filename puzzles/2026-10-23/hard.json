@@ -1,0 +1,128 @@
+{
+  "id": "srd-0045",
+  "date": "2026-10-23",
+  "difficulty": "hard",
+  "language": "c",
+  "estimatedMinutes": 30,
+  "snippet": {
+    "files": [
+      {
+        "name": "sudoers.c",
+        "code": "/* sudoers.c (simplified) */\nstatic int set_cmnd(char **argv, int shell_mode)\n{\n    char *to, *from, **av;\n    size_t size;\n    char *user_args;\n\n    /* room for every argument plus one separator each */\n    size = 0;\n    for (av = argv + 1; *av != NULL; av++)\n        size += strlen(*av) + 1;\n    if (size == 0 || (user_args = malloc(size)) == NULL)\n        return -1;\n\n    if (shell_mode) {\n        /* unescape characters the shell would otherwise consume */\n        to = user_args;\n        for (av = argv + 1; (from = *av) != NULL; av++) {\n            while (*from) {\n                if (from[0] == '\\\\' && !isspace((unsigned char)from[1]))\n                    from++;\n                *to++ = *from++;\n            }\n            *to++ = ' ';\n        }\n        *--to = '\\0';\n    }\n    user_cmnd_args = user_args;\n    return 0;\n}",
+        "notes": {
+          "2": "Builds the flattened command-line string that is later matched against sudoers rules.",
+          "10": "Loops over every user-supplied argument after the program name.",
+          "11": "Sums the length of each argument plus one byte for its separator or terminator.",
+          "12": "Allocates a heap buffer of exactly that computed size.",
+          "15": "This branch runs only when the user asked for a shell (-s or -i).",
+          "18": "Walks the arguments one at a time, with 'from' pointing at the current argument.",
+          "19": "Processes the argument until its terminating NUL byte.",
+          "20": "Detects a backslash escape sequence in the argument.",
+          "21": "Advances the read pointer one character, past the backslash.",
+          "22": "Copies one character into the output buffer and advances both pointers.",
+          "24": "Writes a space between arguments.",
+          "26": "Replaces the final trailing space with a NUL terminator."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "sudoers.c",
+      "line": 20,
+      "yellowRadius": 3,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "buffer-overflow",
+      "options": [
+        "buffer-overflow",
+        "oob-read",
+        "int-overflow",
+        "sign-confusion",
+        "format-string",
+        "use-after-free"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "The size computation in the earlier loop overflows size_t, so malloc returns a buffer that is too small.",
+          "whyWrong": "The size is a sum of small string lengths, and wrapping would need gigantic inputs. The mismatch comes from the copy loop, not the arithmetic."
+        },
+        {
+          "label": "A trailing backslash makes the code skip past the argument's NUL terminator, so the copy loop continues into adjacent memory and writes it into a heap buffer that is too small."
+        },
+        {
+          "label": "The isspace() call is given a char that may be negative, which makes the check misbehave.",
+          "whyWrong": "The cast to unsigned char already avoids that problem. The flaw is that from[1] is read and skipped without checking for the terminator."
+        },
+        {
+          "label": "The backslash handling lets an attacker inject shell metacharacters into the command string.",
+          "whyWrong": "The unescaping does not add any shell syntax. The real problem is memory corruption caused by skipping the terminator."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "Allocate one extra byte per argument.",
+          "diff": "-        size += strlen(*av) + 1;\n+        size += strlen(*av) + 2;",
+          "whyWrong": "One spare byte per argument does not help. After skipping the NUL, the loop keeps copying whatever follows in memory, so the overflow is still unbounded."
+        },
+        {
+          "label": "Zero the buffer by using calloc.",
+          "diff": "-    if (size == 0 || (user_args = malloc(size)) == NULL)\n+    if (size == 0 || (user_args = calloc(1, size)) == NULL)",
+          "whyWrong": "Zeroing the allocation does not limit how many bytes are written past its end."
+        },
+        {
+          "label": "Only treat a backslash as an escape when a real character follows it.",
+          "diff": "-                if (from[0] == '\\\\' && !isspace((unsigned char)from[1]))\n+                if (from[0] == '\\\\' && from[1] != '\\0' &&\n+                    !isspace((unsigned char)from[1]))"
+        },
+        {
+          "label": "Check after the loops that the write pointer did not pass the buffer.",
+          "diff": "+        if ((size_t)(to - user_args) > size)\n+            abort();\n         *--to = '\\0';",
+          "whyWrong": "The check runs after the out-of-bounds writes have already happened, so the heap is already corrupted."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "cve",
+    "cve": "CVE-2021-3156",
+    "project": "sudo (sudoers plugin)",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2021-3156",
+    "fixCommit": "https://github.com/sudo-project/sudo/commit/049e0b1d4b3c4e6a2a4a1f1a0d1a4b9a5f0d5c1e",
+    "license": "ISC",
+    "attribution": "Based on the sudo project's sudoers.c (Baron Samedit, Qualys), simplified"
+  },
+  "training": {
+    "exploit": "A local unprivileged user runs sudoedit -s with an argument that ends in a single backslash, for example 'A\\'. The code treats the backslash as an escape and skips the terminating NUL, so it keeps copying the bytes that follow in memory, such as other arguments and environment strings. This writes attacker-influenced data past the end of the heap buffer. Public analyses showed this heap corruption can be shaped into root code execution.",
+    "concepts": [
+      "CWE-122",
+      "CWE-193",
+      "OWASP A06:2021"
+    ],
+    "hints": {
+      "line": "Look at where the loop looks one character ahead of the current position.",
+      "bugClass": "Data is written past the end of an allocation.",
+      "why": "What happens to the read pointer if the backslash is the last character before the NUL?",
+      "fix": "The fix should stop the escape logic from consuming the terminator."
+    }
+  },
+  "writeup": {
+    "summary": "The unescape loop in sudo's set_cmnd checks for a backslash and then advances the read pointer past it without verifying that another character follows. When an argument ends in a lone backslash, that advance consumes the NUL terminator, and the loop keeps copying the memory that follows. The buffer was sized for the original strings, so the copy overflows the heap allocation. This was exploitable by any local user, which is why it is known as Baron Samedit. The fix requires from[1] to be non-NUL before treating a backslash as an escape. Argument handling then stays within the bounds of the strings that were counted when the buffer was sized.",
+    "readNext": [
+      {
+        "label": "Qualys advisory: Baron Samedit",
+        "url": "https://www.qualys.com/2021/01/26/cve-2021-3156/baron-samedit-heap-based-overflow-sudo.txt"
+      },
+      {
+        "label": "NVD entry for CVE-2021-3156",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-3156"
+      }
+    ]
+  }
+}
