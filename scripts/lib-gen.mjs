@@ -77,7 +77,7 @@ export async function draftOne({ diff, idNum, date, key, model, fake, catalog })
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model, max_tokens: 8192, messages: [{ role: "user", content: buildPrompt(diff, idNum, date) }] }),
+      body: JSON.stringify({ model, max_tokens: diff === "hard" ? 16000 : 10000, messages: [{ role: "user", content: buildPrompt(diff, idNum, date) }] }),
     });
     if (!res.ok) throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data = await res.json();
