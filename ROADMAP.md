@@ -1,0 +1,157 @@
+# SourceReadle — Build Roadmap
+
+This is the durable plan. It is designed to survive context resets: any new session
+should read this file first, find **NOW / NEXT**, and continue. Update the
+**Status** and the checkboxes as tasks complete, and commit this file with the work.
+
+---
+
+## Resume pointer
+
+- **NOW:** _nothing in progress_
+- **NEXT:** `T0.1` (First-run tutorial) — see Phase 0.
+- **Last updated:** 2026-10-10
+
+When you finish a task: tick its box, move the pointer to the next task, add a one-line
+note under "Changelog" at the bottom, and commit.
+
+---
+
+## Current state (what already exists)
+
+- Static site: vanilla HTML/CSS/JS player in `site/`, built to `_site/` by `scripts/build-site.mjs`, deployed to GitHub Pages by `.github/workflows/daily.yml`.
+- Puzzle model: `puzzles/<date>/<easy|medium|hard>.json`, schema in `schema/puzzle.schema.json`, taxonomy in `schema/taxonomy.json`.
+- 4 stages: find line → name bug class → why exploitable → pick fix. Explain mode (line notes), Learn mode (hints, no streak). Streaks + share grid. Local-date clamp. Language filter. Mobile layout with wrapping.
+- Content: 42 authored + auto-generated puzzles; rotation recycles the catalog so the feed never empties.
+- Generation: `scripts/generate-backlog.mjs` + `scripts/lib-gen.mjs` (Anthropic API), self-validates via `scripts/lib-validate.mjs`, scrubs secret-shaped strings, avoids duplicate CVEs, caps per run. On-demand only (`.github/workflows/generate.yml`, `workflow_dispatch`).
+- Live: https://artsydney.github.io/SourceReadle/ (repo `ArtSydney/SourceReadle`).
+
+## Guiding principles
+
+1. **Trust is sacred.** Security people abandon a product after one wrong answer key. Prefer provable correctness over volume.
+2. **Teach the real skill** (trace taint, read diffs, run payloads) over trivia recognition.
+3. **Keep the daily free + light** as the funnel; depth lives in opt-in modes.
+4. **Ship small, verify in the real app, keep the static-first architecture** until a feature genuinely needs a backend (flagged per task).
+
+## Hosting feasibility (static GitHub Pages, like Wordle)
+
+The original Wordle was 100% static (word list in the client, stats in localStorage, no
+accounts, no server) and still went viral. The same holds here. Three buckets:
+
+- **Runs in the browser — 100% static, no server:** the whole player; Phase 0; Phase 2
+  (source→sink is just client logic + puzzle data); **Phase 3 the exploit sandbox** —
+  WASM (Pyodide/QuickJS/wasm) executes *in the visitor's browser*, so "run the payload"
+  needs no backend at all. This is the key insight: our two flashiest features don't need a server.
+- **Runs at build time in CI — still no live server:** **Phase 1 execution-verification**
+  runs in **GitHub Actions** (free for public repos), bakes a `verified` flag into the
+  static JSON; generation already works this way. Diff-review sourcing (Phase 5) is also a
+  build-time pipeline.
+- **Genuinely needs a backend (NOT static):** cross-device sync (`T4.1`), leaderboards
+  (`T6.1`), async duels (`T6.2`), teams/SSO (`T6.3`). These require shared, persistent,
+  server-validated state. That's also the monetizable layer — so add a lightweight backend
+  (e.g. Cloudflare Workers + D1/KV) *when* you reach Phase 4/6, keeping this static site as
+  the frontend. Everything before Phase 4 ships on Pages as-is.
+
+**Pages limits to watch:** ~1 GB site size, ~100 GB/month soft bandwidth, 10 builds/hr.
+Pyodide adds ~6–12 MB (cached after first load) — fine. If the game goes viral and
+bandwidth is a problem, move the *same* static bundle to Cloudflare Pages or Netlify (free,
+bigger limits) with zero code changes. Verdict: **build Phases 0–3 (and 5) entirely on
+GitHub Pages; only Phases 4 & 6 require introducing a backend.**
+
+## Decisions needed (resolve before the phases that depend on them)
+
+- **D1 — Backend/accounts?** Progression, leaderboards, and teams need identity + server state. Options: stay static + localStorage (no cross-device), or add a lightweight backend (e.g. Cloudflare Workers + D1/KV, or Supabase). Needed for Phase 4+.
+- **D2 — Execution runtime for verification/sandbox?** Server-side containers (CI) vs in-browser WASM (Pyodide for Python, QuickJS for JS, Wasmer/wasm for C). Needed for Phase 1 and Phase 3. Likely: CI containers for verification (Phase 1), WASM for the in-browser exploit sandbox (Phase 3).
+- **D3 — Monetization shape?** Free daily / Pro / Teams. Affects Phase 6 and any auth work.
+
+---
+
+## Phase 0 — Quick wins (low risk, high value, no backend)
+
+Small, self-contained, each ~one session. Do these first to build momentum and fix the leakiest parts of the funnel.
+
+- [ ] **T0.1 — First-run tutorial.** A dismissible, 4-step interactive overlay the first time someone loads the site (localStorage flag), walking through the four stages on a trivial sample.
+  - Steps: design copy for 4 steps; build an overlay component in `site/`; gate on `localStorage` `seenTutorial`; add a "?" button to replay it.
+  - Accept: a brand-new visitor is guided through one full solve; returning visitors never see it unless they tap "?".
+- [ ] **T0.2 — Intro tier (below Easy).** An "Intro" difficulty with heavy scaffolding (bug pre-highlighted, 2 options per stage).
+  - Steps: extend taxonomy/schema to allow `difficulty: "intro"` (or a per-puzzle `scaffold` flag); add tab; author/generate 5 intro puzzles.
+  - Accept: a non-expert can complete an Intro puzzle with near-100% success and learn one concept.
+- [ ] **T0.3 — Better feedback loop.** Make the 👎 report capture structured data (which stage felt wrong, free text) and land somewhere actionable.
+  - Steps: replace the raw GitHub-issue link with a small form (prefilled issue body, or a serverless endpoint if D1 resolved); label issues `player-report`.
+  - Accept: a report tells us the puzzle id, the stage, and the complaint without the player writing boilerplate.
+- [ ] **T0.4 — Meaningful share grid.** Redesign the share text so it encodes the *path* (e.g. number of line guesses, whether class was family-correct) in a way that's intriguing to non-players, like Wordle's grid.
+  - Steps: design the glyph language; implement in `shareText()`; keep it spoiler-free.
+  - Accept: two different solves produce visibly different, interesting grids; posting one makes a non-player curious.
+- [ ] **T0.5 — Accessibility & polish pass.** Keyboard nav, focus states, ARIA on the stages, reduced-motion, color-contrast check for the green/yellow/grey feedback (color-blind safe: add symbols/patterns, not just color).
+  - Accept: fully keyboard-playable; passes a contrast checker; feedback distinguishable without color.
+
+## Phase 1 — Trust: execution-verified answer keys  ⭐ highest leverage
+
+Turn the biggest risk (wrong answer keys) into the biggest selling point. Needs **D2**.
+
+- [ ] **T1.1 — Define the verification contract.** Add optional `verify` block to the schema: how to build/run the snippet, a PoC that should SUCCEED (bug present) against the original, and that should FAIL against the correct fix (and still SUCCEED against each wrong fix).
+  - Steps: design `verify` schema (language, build cmd, poc, expected results per fix option); document in CONTRIBUTING.
+  - Accept: one hand-written example puzzle carries a complete, runnable `verify` block.
+- [ ] **T1.2 — Per-language runner (start with Python + C).** A sandboxed runner (container in CI) that applies each fix option as a patch and runs the PoC, recording pass/fail.
+  - Steps: `scripts/verify.mjs` + per-language Docker images; resource/time/network limits; output a verification report JSON.
+  - Accept: running it on the T1.1 example proves: original=vuln, correct fix=blocked, each wrong fix=still vuln. Mismatch → non-zero exit.
+- [ ] **T1.3 — Gate generation on verification.** `generate-backlog.mjs` discards any drafted puzzle whose answer key doesn't verify by execution (where a `verify` block is producible), not just structurally.
+  - Accept: an auto-generated puzzle with a wrong "correct" fix is rejected automatically.
+- [ ] **T1.4 — "Verified by execution" badge.** Surface verification status in the player and in `index.json`.
+  - Accept: verified puzzles show a badge; the player can filter to verified-only.
+- [ ] **T1.5 — Backfill.** Add `verify` blocks + run verification for the existing CVE hard puzzles (Heartbleed, Shellshock, GHOST, Log4Shell, Baron Samedit, Struts2, PHPMailer, nginx, Text4Shell, php-cgi).
+  - Accept: each either passes verification or is flagged for manual correction.
+
+## Phase 2 — Core mechanic: source → sink + compounding feedback
+
+Fix the weak "tap one line" stage. Make it teach data flow and make guesses deductive.
+
+- [ ] **T2.1 — Schema: source & sink.** Add `stages.flow` with `source` (where input enters) and `sink` (where damage happens) line locations; keep `line` for backward compat during migration.
+  - Accept: schema + validator updated; one example puzzle annotated with source+sink.
+- [ ] **T2.2 — Interaction redesign.** Player stage 1 becomes "tap the source, then the sink." Compounding feedback: correct source locks in; sink feedback is directional (upstream/downstream, warmer/colder).
+  - Accept: playable on the example; feedback helps you reason, not just guess.
+- [ ] **T2.3 — Migrate content.** Add flow annotations to authored puzzles (script-assisted); update the generator prompt to emit source+sink.
+  - Accept: all live puzzles have flow data; generator produces it and it validates.
+- [ ] **T2.4 — Rework the share grid for flow.** Encode how efficiently the player traced source→sink.
+
+## Phase 3 — Exploit sandbox (the "wow")
+
+After identifying the bug, let the player write a payload and watch it fire, in-browser. Needs **D2** (WASM).
+
+- [ ] **T3.1 — Runtime spike.** Prototype Pyodide (Python) running a vulnerable snippet + attacker input in-browser, sandboxed, with a verdict.
+  - Accept: one Python puzzle where typing a payload triggers the bug and the UI confirms "exploited".
+- [ ] **T3.2 — Sandbox UI.** Payload editor, run button, clear success/fail verdict, reset. Opt-in, after the fix stage.
+- [ ] **T3.3 — Exploit harness data.** Per-puzzle: the runnable vulnerable program + a checker that detects successful exploitation.
+- [ ] **T3.4 — Extend runtimes.** Add JS (QuickJS/web worker) and C (wasm) where feasible; gate puzzles that support the sandbox.
+
+## Phase 4 — Progression & personalization  (needs D1)
+
+- [ ] **T4.1 — Identity & sync.** Resolve D1; add accounts/sync (or anonymous device sync) so progress/rating persist cross-device.
+- [ ] **T4.2 — Per-CWE skill rating.** Elo-style rating per bug family from solve outcomes.
+- [ ] **T4.3 — Weakness Trainer mode.** Serve puzzles from the player's weakest classes.
+- [ ] **T4.4 — Spaced repetition.** Resurface previously-missed classes on an interval.
+- [ ] **T4.5 — Mastery tracks & seasons.** Per-class progress, badges, seasonal resets.
+
+## Phase 5 — Real codebases / diff-review mode
+
+- [ ] **T5.1 — Diff-review puzzle type.** "Ship it or block it?" — show a PR diff, player decides safe/unsafe and marks the risky hunk.
+- [ ] **T5.2 — Sourcing pipeline.** Mine real vuln-introducing commits + their fixes (GHSA/CVE → commit) into diff-review puzzles, with verification (Phase 1 reused).
+- [ ] **T5.3 — Larger-file mode.** Find the bug in a realistic multi-hundred-line file, with search/scroll, closer to real review.
+
+## Phase 6 — Social & Teams (business)  (needs D1, D3)
+
+- [ ] **T6.1 — Leaderboards.** Daily speed/clean-sweep boards with anti-cheat (server-validated times).
+- [ ] **T6.2 — Async duels.** Challenge a friend on the same puzzle; compare paths.
+- [ ] **T6.3 — Teams.** Org accounts, per-CWE literacy dashboard, SSO.
+- [ ] **T6.4 — Custom content for teams.** Generate puzzles from a team's own codebase and CVE history (reuses generation + verification).
+- [ ] **T6.5 — Monetization.** Free daily → Pro (archive, sandbox, practice-by-class, verified-only) → Teams.
+
+---
+
+## Sequencing rationale
+
+Do **Phase 0** now (cheap, fixes the funnel). Then **Phase 1** (trust) because it de-risks everything downstream and makes auto-generation safe. Then **Phase 2** (core mechanic) for game feel, and **Phase 3** (sandbox) for word-of-mouth. Phases 4–6 are the platform/business and depend on the backend decision (D1).
+
+## Changelog
+
+- 2026-10-10 — Roadmap created.
