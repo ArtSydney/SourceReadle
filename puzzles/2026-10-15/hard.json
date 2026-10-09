@@ -1,0 +1,110 @@
+{
+  "id": "srd-0018",
+  "date": "2026-10-15",
+  "difficulty": "hard",
+  "language": "java",
+  "estimatedMinutes": 30,
+  "snippet": {
+    "files": [
+      {
+        "name": "MultipartParser.java",
+        "code": "// Simplified from Struts2 Jakarta multipart parser, pre-patch.\npublic void parse(HttpServletRequest req) {\n    try {\n        upload.parseRequest(req);\n    } catch (FileUploadException e) {\n        String contentType = req.getContentType();\n        // Build a localized error that embeds the bad Content-Type.\n        String msg = LocalizedTextUtil.findText(\n            getClass(), \"struts.messages.upload.error.parse\",\n            locale, \"Error\", new Object[]{ contentType });\n        addActionError(msg);   // findText evaluates %{...} as OGNL\n    }\n}",
+        "notes": {
+          "4": "Attempts to parse the multipart upload.",
+          "5": "If parsing fails (which the attacker can force), handle the error.",
+          "6": "Reads the request's Content-Type header — attacker-controlled.",
+          "8": "Builds a localized error message that includes the Content-Type as a parameter.",
+          "11": "Adds the error. The message text is run through OGNL expression evaluation."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "MultipartParser.java",
+      "line": 8,
+      "yellowRadius": 3,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "code-inj",
+      "options": [
+        "code-inj",
+        "log-inj",
+        "insecure-deser",
+        "ssrf",
+        "command-inj",
+        "xxe"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "`parseRequest` buffers the whole upload in memory, enabling a DoS",
+          "whyWrong": "Memory use isn't the issue; the error-handling path evaluates attacker input as code."
+        },
+        {
+          "label": "The attacker-controlled Content-Type is placed into a message that `findText` evaluates as an OGNL expression, so a `%{...}` payload runs Java code"
+        },
+        {
+          "label": "`getContentType()` may return null and cause a NullPointerException",
+          "whyWrong": "A possible NPE is a crash, not the remote code execution this creates."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Strip '%{' and '${' from the Content-Type",
+          "diff": "+        contentType = contentType.replace(\"%{\", \"\").replace(\"${\", \"\");",
+          "whyWrong": "Nested/obfuscated expressions can reconstruct the markers after naive stripping."
+        },
+        {
+          "label": "Do not pass user-controlled text through OGNL; build the error message without expression evaluation",
+          "diff": "-        String msg = LocalizedTextUtil.findText(\n-            getClass(), \"struts.messages.upload.error.parse\",\n-            locale, \"Error\", new Object[]{ contentType });\n-        addActionError(msg);\n+        addActionError(\"Upload parse error\"); // no user text evaluated as OGNL"
+        },
+        {
+          "label": "Return HTTP 400 when parsing fails",
+          "diff": "+        resp.setStatus(400);\n         String msg = LocalizedTextUtil.findText(...);",
+          "whyWrong": "The OGNL has already been evaluated while building `msg`, before any response status is set."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "cve",
+    "cve": "CVE-2017-5638",
+    "project": "Apache Struts 2",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2017-5638",
+    "license": "Apache-2.0",
+    "attribution": "Apache Struts 2, CVE-2017-5638, simplified"
+  },
+  "training": {
+    "exploit": "Send a request whose `Content-Type` header is a malformed multipart value containing an OGNL payload, e.g. `%{(#cmd='id').(#execute=@java.lang.Runtime@getRuntime().exec(#cmd))...}`. Parsing fails, the error builder runs the Content-Type through `findText`/OGNL, and the embedded expression executes the command — unauthenticated RCE. (This was the Equifax-breach bug.)",
+    "concepts": [
+      "CWE-94",
+      "CVE-2017-5638"
+    ],
+    "hints": {
+      "line": "The RCE happens while constructing the error message.",
+      "bugClass": "Attacker text is evaluated as an expression language.",
+      "why": "What does findText do with `%{...}` in the text?",
+      "fix": "Never evaluate user-controlled strings as OGNL."
+    }
+  },
+  "writeup": {
+    "summary": "When multipart parsing failed, Struts built a localized error message that embedded the raw `Content-Type` header and then evaluated that message as an OGNL expression. An attacker sent a `Content-Type` containing a `%{...}` payload; forcing a parse error made Struts evaluate it, executing arbitrary Java — unauthenticated remote code execution (the 2017 bug behind the Equifax breach). The real fix stopped evaluating user-controlled error text as OGNL; stripping expression markers was bypassable.",
+    "readNext": [
+      {
+        "label": "CVE-2017-5638 (NVD)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2017-5638"
+      },
+      {
+        "label": "Apache Struts S2-045 advisory",
+        "url": "https://cwiki.apache.org/confluence/display/WW/S2-045"
+      }
+    ]
+  }
+}

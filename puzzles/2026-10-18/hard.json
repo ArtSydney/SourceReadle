@@ -1,0 +1,113 @@
+{
+  "id": "srd-0027",
+  "date": "2026-10-18",
+  "difficulty": "hard",
+  "language": "java",
+  "estimatedMinutes": 30,
+  "snippet": {
+    "files": [
+      {
+        "name": "Greeter.java",
+        "code": "// Simplified from Apache Commons Text, pre-1.10 (CVE-2022-42889).\nimport org.apache.commons.text.StringSubstitutor;\n\npublic String greet(String name) {\n    StringSubstitutor interpolator = StringSubstitutor.createInterpolator();\n    // Build a greeting from the user-supplied name.\n    return interpolator.replace(\"Hello, \" + name + \"!\");\n}",
+        "notes": {
+          "4": "Takes a user-supplied name.",
+          "5": "Creates the default interpolator — which, pre-1.10, enabled `script`, `dns`, and `url` lookups.",
+          "7": "Interpolates the string, expanding any `${...}` the name contains."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "Greeter.java",
+      "line": 7,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "code-inj",
+      "options": [
+        "code-inj",
+        "log-inj",
+        "insecure-deser",
+        "ssrf",
+        "command-inj",
+        "xxe"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Building the string with `+` is inefficient for long names",
+          "whyWrong": "Performance is irrelevant; the interpolation step is the danger."
+        },
+        {
+          "label": "`createInterpolator()` enables lookups (script, url, dns), and the name is interpolated, so `${script:...}` executes code and `${url:...}` makes server-side requests"
+        },
+        {
+          "label": "`replace()` can throw on an unmatched `}`",
+          "whyWrong": "A parse exception is trivial next to code execution."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Strip '${' from name before interpolating",
+          "diff": "+    name = name.replace(\"${\", \"\");",
+          "whyWrong": "Nested/obfuscated expressions can reconstruct the marker after stripping."
+        },
+        {
+          "label": "Don't run untrusted input through an interpolator; insert `name` as data without expression evaluation",
+          "diff": "-    StringSubstitutor interpolator = StringSubstitutor.createInterpolator();\n-    return interpolator.replace(\"Hello, \" + name + \"!\");\n+    return \"Hello, \" + name + \"!\"; // no interpolation of user input"
+        },
+        {
+          "label": "Catch exceptions thrown by replace()",
+          "diff": "+    try { return interpolator.replace(...); } catch (Exception e) { return \"Hello!\"; }",
+          "whyWrong": "The lookup executes during replace(); catching afterward doesn't prevent it."
+        },
+        {
+          "label": "HTML-encode name before interpolating",
+          "diff": "+    name = escapeHtml(name);",
+          "whyWrong": "Wrong context; HTML escaping doesn't stop `${...}` lookups from firing."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "cve",
+    "cve": "CVE-2022-42889",
+    "project": "Apache Commons Text",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2022-42889",
+    "license": "Apache-2.0",
+    "attribution": "Apache Commons Text, CVE-2022-42889 (Text4Shell), simplified"
+  },
+  "training": {
+    "exploit": "Pass a name of `${script:javascript:java.lang.Runtime.getRuntime().exec('id')}` — the interpolator's script lookup evaluates it and runs the command (remote code execution). `${url:UTF-8:http://169.254.169.254/...}` turns it into SSRF, and `${dns:...}` exfiltrates data over DNS.",
+    "concepts": [
+      "CWE-94",
+      "CVE-2022-42889"
+    ],
+    "hints": {
+      "line": "The RCE is in the interpolation of user text.",
+      "bugClass": "Attacker text is evaluated as an expression.",
+      "why": "What lookups does the default interpolator enable?",
+      "fix": "Never interpolate untrusted input; keep it as data."
+    }
+  },
+  "writeup": {
+    "summary": "`StringSubstitutor.createInterpolator()` (before Commons Text 1.10) registered `script`, `dns`, and `url` lookups. Interpolating a string that embeds the user's `name` means a value like `${script:javascript:...}` is evaluated as code — remote code execution — while `${url:...}`/`${dns:...}` enable SSRF and exfiltration. This is Text4Shell. The fix is to never run untrusted input through an interpolator: build the greeting with the name as plain data, or use a substitutor configured without the dangerous lookups.",
+    "readNext": [
+      {
+        "label": "CVE-2022-42889 (NVD)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2022-42889"
+      },
+      {
+        "label": "Apache Commons Text security",
+        "url": "https://commons.apache.org/proper/commons-text/security.html"
+      }
+    ]
+  }
+}

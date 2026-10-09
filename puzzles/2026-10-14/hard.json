@@ -1,0 +1,115 @@
+{
+  "id": "srd-0015",
+  "date": "2026-10-14",
+  "difficulty": "hard",
+  "language": "c",
+  "estimatedMinutes": 30,
+  "snippet": {
+    "files": [
+      {
+        "name": "set_cmnd.c",
+        "code": "/* Simplified from sudo set_cmnd() argument handling, pre-patch. */\nfor (size = 0, av = argv + 1; *av; av++)\n    size += strlen(*av) + 1;\nuser_args = malloc(size);\n\nfor (to = user_args, av = argv + 1; (from = *av); av++) {\n    while (*from) {\n        if (from[0] == '\\\\' && !isspace((unsigned char)from[1]))\n            from++;                 /* skip the escaping backslash */\n        *to++ = *from++;            /* copy the next character */\n    }\n    *to++ = ' ';\n}",
+        "notes": {
+          "2": "First pass: walk the arguments to compute the total length needed.",
+          "3": "Adds each argument's length plus one (for a separator).",
+          "4": "Allocates exactly that many bytes for the concatenated arguments.",
+          "6": "Second pass: copy each argument into the buffer, unescaping as it goes.",
+          "7": "Loop over the characters of the current argument until the NUL.",
+          "8": "If this char is a backslash and the next is not whitespace, treat it as an escape.",
+          "9": "Skip the backslash so the escaped character is copied literally.",
+          "10": "Copy one character and advance both pointers.",
+          "12": "Write a space after each argument."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "set_cmnd.c",
+      "line": 8,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "buffer-overflow",
+      "options": [
+        "buffer-overflow",
+        "oob-read",
+        "int-overflow",
+        "use-after-free",
+        "sign-confusion",
+        "format-string",
+        "toctou"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "`malloc(size)` is not checked for NULL, so a failed allocation is dereferenced",
+          "whyWrong": "Allocation failure is a separate, lesser issue; the exploited bug is the write past the buffer."
+        },
+        {
+          "label": "When an argument ends in a lone backslash, line 8 is true, line 9 skips it, then line 10 copies the terminating NUL and advances past the end — so the inner loop keeps reading and writing attacker bytes beyond `user_args`"
+        },
+        {
+          "label": "`isspace()` with a signed char is undefined for negative values",
+          "whyWrong": "The `(unsigned char)` cast already guards that; it is not the root cause here."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Allocate size * 2 to leave head-room",
+          "diff": "-user_args = malloc(size);\n+user_args = malloc(size * 2);",
+          "whyWrong": "The read/write is unbounded once the loop runs off the string; a bigger buffer only moves the overflow."
+        },
+        {
+          "label": "Only treat a backslash as an escape when a character actually follows it",
+          "diff": "-        if (from[0] == '\\\\' && !isspace((unsigned char)from[1]))\n+        if (from[0] == '\\\\' && from[1] != '\\0' && !isspace((unsigned char)from[1]))\n             from++;"
+        },
+        {
+          "label": "Replace the manual loop with strncpy(to, from, size)",
+          "diff": "-    while (*from) { ... }\n+    strncpy(to, from, size);",
+          "whyWrong": "This drops the unescaping entirely and still trusts a length that the escape logic made wrong; it doesn't address the over-read."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "cve",
+    "cve": "CVE-2021-3156",
+    "project": "Sudo",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2021-3156",
+    "license": "ISC",
+    "attribution": "Sudo, CVE-2021-3156 (Baron Samedit), simplified"
+  },
+  "training": {
+    "exploit": "Invoke sudo in a mode that reaches this path (e.g. `sudoedit -s`) with an argument ending in a single backslash followed by a long attacker-controlled string. The escape handling walks past the end of the argument and copies attacker bytes beyond `user_args` on the heap, corrupting adjacent allocator metadata — crafted carefully, this yields local root.",
+    "concepts": [
+      "CWE-787",
+      "CVE-2021-3156"
+    ],
+    "hints": {
+      "line": "The copy overflows, but the faulty decision is the escape test above it.",
+      "bugClass": "Memory is written past the end of a heap buffer.",
+      "why": "What happens when `from` points at a backslash that is the last character?",
+      "fix": "Don't treat a trailing backslash as escaping the NUL terminator."
+    }
+  },
+  "writeup": {
+    "summary": "In shell/edit mode, sudo copied the command line into a heap buffer while unescaping backslashes. The escape test checked `from[1]` without first confirming a character exists: for an argument ending in a lone `\\`, it skipped the backslash and copied the terminating NUL, then the `while (*from)` loop continued reading and writing past the end of the argument — a heap buffer overflow with attacker-controlled contents. Because sudo is setuid root and the path is reachable without a password prompt in that mode, it became a reliable local privilege escalation (Baron Samedit). The fix stops treating a trailing backslash as an escape.",
+    "readNext": [
+      {
+        "label": "Qualys advisory: Baron Samedit (CVE-2021-3156)",
+        "url": "https://www.qualys.com/2021/01/26/cve-2021-3156/baron-samedit-heap-based-overflow-sudo.txt"
+      },
+      {
+        "label": "CVE-2021-3156 (NVD)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-3156"
+      }
+    ]
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "id": "srd-0037",
+  "date": "2026-10-22",
+  "difficulty": "easy",
+  "language": "python",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "invoices.py",
+        "code": "from flask import request, jsonify\n\n@app.route(\"/api/invoice\")\n@login_required\ndef get_invoice():\n    # Return the requested invoice as JSON.\n    invoice_id = request.args.get(\"id\")\n    invoice = db.invoices.find_one({\"_id\": invoice_id})\n    return jsonify(invoice)",
+        "notes": {
+          "4": "The user must be logged in to reach this endpoint.",
+          "7": "Reads the invoice `id` from the query string — attacker-controlled.",
+          "8": "Looks the invoice up by id only.",
+          "9": "Returns it as JSON."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "invoices.py",
+      "line": 8,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "idor",
+      "options": [
+        "idor",
+        "missing-authz",
+        "sqli",
+        "path-traversal",
+        "auth-bypass"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "`find_one` returns None for an unknown id, yielding an empty response",
+          "whyWrong": "A missing-record case is robustness, not the access-control flaw."
+        },
+        {
+          "label": "The invoice is fetched by id with no check that it belongs to the logged-in user, so changing `id` returns other users' invoices"
+        },
+        {
+          "label": "`invoice_id` is a string but `_id` may be an ObjectId, causing a type mismatch",
+          "whyWrong": "A type nuance doesn't explain the authorization gap."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Use random UUIDs for invoice ids",
+          "diff": "# generate uuid4 ids instead of sequential ones",
+          "whyWrong": "Obscurity only: ids leak (emails, links, referrers) and can still be requested. It isn't an access-control check."
+        },
+        {
+          "label": "Scope the lookup to the current user",
+          "diff": "-    invoice = db.invoices.find_one({\"_id\": invoice_id})\n+    invoice = db.invoices.find_one({\"_id\": invoice_id, \"owner\": current_user.id})"
+        },
+        {
+          "label": "Already fixed — @login_required is enough",
+          "diff": "# no change",
+          "whyWrong": "Authentication proves who the caller is; it doesn't stop one logged-in user from reading another's invoice."
+        },
+        {
+          "label": "Rate-limit the endpoint",
+          "diff": "+    @limiter.limit(\"10/minute\")",
+          "whyWrong": "Slows enumeration but still lets an attacker read any single invoice they target."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Log in as any user, then request `/api/invoice?id=<another customer's id>` — or simply iterate ids. Because the query filters on id alone, the server returns invoices belonging to everyone, leaking other customers' data.",
+    "concepts": [
+      "CWE-639",
+      "OWASP A01:2021"
+    ],
+    "hints": {
+      "line": "Where is the record selected, and what does it filter on?",
+      "bugClass": "You can reach another user's object by its identifier.",
+      "why": "Does the query confirm the record belongs to the caller?",
+      "fix": "Filter the lookup by the owning user, not id alone."
+    }
+  },
+  "writeup": {
+    "summary": "The endpoint authenticates the caller but then fetches the invoice by id alone, never checking ownership — an insecure direct object reference. Any logged-in user can read every invoice by changing the `id`. The fix scopes the query to the current user (`owner: current_user.id`), so a mismatched id simply returns nothing. Random ids, login requirements, and rate limits don't enforce ownership.",
+    "readNext": [
+      {
+        "label": "OWASP: Insecure Direct Object Reference Prevention",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html"
+      }
+    ]
+  }
+}

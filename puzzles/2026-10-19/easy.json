@@ -1,0 +1,105 @@
+{
+  "id": "srd-0028",
+  "date": "2026-10-19",
+  "difficulty": "easy",
+  "language": "python",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "login.py",
+        "code": "from flask import Flask, request, redirect\n\napp = Flask(__name__)\n\n@app.route(\"/login\")\ndef login():\n    # ... authenticate the user ...\n    next_url = request.args.get(\"next\", \"/\")\n    return redirect(next_url)",
+        "notes": {
+          "5": "The /login route.",
+          "8": "Reads the `next` query parameter (where to go after login) — attacker-controlled.",
+          "9": "Redirects the browser to that value."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "login.py",
+      "line": 9,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "open-redirect",
+      "options": [
+        "open-redirect",
+        "ssrf",
+        "path-traversal",
+        "idor",
+        "code-inj"
+      ]
+    },
+    "why": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "`redirect` issues a 302 that browsers don't cache",
+          "whyWrong": "Caching is irrelevant to the redirect abuse."
+        },
+        {
+          "label": "The default of `/` means missing params break the flow",
+          "whyWrong": "The default is a usability detail, not the vulnerability."
+        },
+        {
+          "label": "`next_url` is attacker-controlled and used as the redirect target, so a link to this trusted site can bounce victims to an attacker's site (phishing)"
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Reject next if it starts with 'http'",
+          "diff": "+    if next_url.startswith(\"http\"): next_url = \"/\"\n     return redirect(next_url)",
+          "whyWrong": "`//evil.com` (protocol-relative) and backslash tricks bypass this and still redirect off-site."
+        },
+        {
+          "label": "Allow only a local path: parse it and require an empty scheme and netloc",
+          "diff": "-    next_url = request.args.get(\"next\", \"/\")\n+    raw = request.args.get(\"next\", \"/\")\n+    u = urlparse(raw)\n+    next_url = raw if (not u.scheme and not u.netloc and raw.startswith(\"/\")) else \"/\""
+        },
+        {
+          "label": "URL-encode next_url before redirecting",
+          "diff": "-    return redirect(next_url)\n+    return redirect(quote(next_url))",
+          "whyWrong": "Encoding corrupts a legitimate path and still can't confirm the destination is your site."
+        },
+        {
+          "label": "Check that next_url contains your domain name",
+          "diff": "+    if \"mysite.com\" not in next_url: next_url = \"/\"",
+          "whyWrong": "`https://evil.com/?x=mysite.com` contains it; substring checks are trivially bypassed."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Send a victim `https://trusted/login?next=https://evil.example/` (or `next=//evil.example`). They log in on the real site and are redirected to an attacker page — often a convincing 'session expired, log in again' clone that harvests the credentials they just used.",
+    "concepts": [
+      "CWE-601",
+      "OWASP A01:2021"
+    ],
+    "hints": {
+      "line": "Where does user input choose where the browser goes?",
+      "bugClass": "The redirect destination is user-controlled.",
+      "why": "Who benefits from an off-site bounce on your trusted domain?",
+      "fix": "Permit only destinations within your own site."
+    }
+  },
+  "writeup": {
+    "summary": "`redirect(next_url)` sends the browser wherever `next` points, including off-site. On a trusted domain this powers phishing: the victim trusts the first URL and lands on an attacker's clone. Restrict to local paths — parse the value and require an empty scheme and netloc (or use the framework's safe-URL helper). Blocklisting `http` misses protocol-relative and backslash forms.",
+    "readNext": [
+      {
+        "label": "OWASP Unvalidated Redirects and Forwards",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"
+      }
+    ]
+  }
+}

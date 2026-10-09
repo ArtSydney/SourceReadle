@@ -1,0 +1,109 @@
+{
+  "id": "srd-0041",
+  "date": "2026-10-23",
+  "difficulty": "medium",
+  "language": "javascript",
+  "estimatedMinutes": 15,
+  "snippet": {
+    "files": [
+      {
+        "name": "static.js",
+        "code": "const express = require(\"express\");\nconst path = require(\"path\");\nconst app = express();\n\napp.get(\"/download\", (req, res) => {\n  // Serve a file from the public directory.\n  const file = req.query.file;\n  res.sendFile(path.join(__dirname, \"public\", file));\n});",
+        "notes": {
+          "5": "The /download route.",
+          "7": "Reads the `file` query parameter — attacker-controlled.",
+          "8": "Joins it onto the public directory and serves the resulting absolute path."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "static.js",
+      "line": 8,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "path-traversal",
+      "options": [
+        "path-traversal",
+        "zip-slip",
+        "idor",
+        "ssrf",
+        "open-redirect"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "`sendFile` streams large files, which can exhaust memory",
+          "whyWrong": "Streaming is fine; the flaw is which file can be selected."
+        },
+        {
+          "label": "`file` is attacker-controlled and `path.join` resolves `../` segments, so the absolute path handed to `sendFile` can point outside the public directory"
+        },
+        {
+          "label": "`req.query.file` can be an array, causing a type error",
+          "whyWrong": "A type edge case is robustness, not the traversal."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Remove '..' from file",
+          "diff": "+  const file = (req.query.file || \"\").replace(/\\.\\./g, \"\");",
+          "whyWrong": "`....//` collapses back to `../` and encoded forms slip through."
+        },
+        {
+          "label": "Use sendFile's root option so paths can't escape it",
+          "diff": "-  res.sendFile(path.join(__dirname, \"public\", file));\n+  res.sendFile(file, { root: path.join(__dirname, \"public\") });"
+        },
+        {
+          "label": "Only allow files ending in .pdf",
+          "diff": "+  if (!file.endsWith(\".pdf\")) return res.sendStatus(400);",
+          "whyWrong": "An extension check doesn't confine the directory; traversal to other .pdf paths (or suffix tricks) remains."
+        },
+        {
+          "label": "URL-decode file before joining",
+          "diff": "+  const file = decodeURIComponent(req.query.file);",
+          "whyWrong": "Decoding does nothing to confine the path and can normalize an attacker's sequences for them."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Request `/download?file=../../../../etc/passwd`. `path.join` collapses the `../` segments into an absolute path outside `public`, and because that path is absolute, `sendFile` serves it without its traversal guard — returning arbitrary files.",
+    "concepts": [
+      "CWE-22",
+      "OWASP A01:2021"
+    ],
+    "hints": {
+      "line": "Where does user input become the file that's served?",
+      "bugClass": "Input steers which path is read.",
+      "why": "What does path.join do with `..`, and does sendFile guard an absolute path?",
+      "fix": "Let sendFile confine the path to a root directory."
+    }
+  },
+  "writeup": {
+    "summary": "`path.join(__dirname, \"public\", file)` lets `../` in `file` climb out of the public directory, producing an absolute path that `sendFile` serves without applying its own traversal protection (which only engages for the `root`-relative form). Passing the filename through `sendFile(file, { root: publicDir })` makes Express reject any path that escapes `root`. Stripping `..` or checking extensions is bypassable.",
+    "readNext": [
+      {
+        "label": "Express res.sendFile (root option)",
+        "url": "https://expressjs.com/en/api.html#res.sendFile"
+      },
+      {
+        "label": "OWASP Path Traversal",
+        "url": "https://owasp.org/www-community/attacks/Path_Traversal"
+      }
+    ]
+  }
+}

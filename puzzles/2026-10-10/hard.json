@@ -1,0 +1,124 @@
+{
+  "id": "srd-0003",
+  "date": "2026-10-10",
+  "difficulty": "hard",
+  "language": "c",
+  "estimatedMinutes": 30,
+  "snippet": {
+    "files": [
+      {
+        "name": "t1_lib.c",
+        "code": "/* Simplified from OpenSSL tls1_process_heartbeat(), pre-patch. */\nstatic int tls1_process_heartbeat(SSL *s)\n{\n    unsigned char *p = &s->s3->rrec.data[0], *pl;\n    unsigned short hbtype;\n    unsigned int payload;\n    unsigned int padding = 16; /* Use minimum padding */\n\n    /* Read type and payload length first */\n    hbtype = *p++;\n    n2s(p, payload);          /* 16-bit length taken from the request */\n    pl = p;\n\n    if (hbtype == TLS1_HB_REQUEST)\n    {\n        unsigned char *buffer, *bp;\n        int r;\n\n        /* Allocate memory for the response: 1 byte message type,\n         * 2 bytes payload length, payload, padding. */\n        buffer = OPENSSL_malloc(1 + 2 + payload + padding);\n        bp = buffer;\n\n        *bp++ = TLS1_HB_RESPONSE;\n        s2n(payload, bp);\n        memcpy(bp, pl, payload);\n        bp += payload;\n        RAND_pseudo_bytes(bp, padding);\n\n        r = ssl3_write_bytes(s, TLS1_RT_HEARTBEAT, buffer, 3 + payload + padding);\n        if (r < 0) return r;\n        OPENSSL_free(buffer);\n    }\n    return 0;\n}\n",
+        "notes": {
+          "4": "`p` points at the start of the received heartbeat record; `pl` will point at its payload.",
+          "7": "Padding is fixed at 16 bytes.",
+          "10": "Reads the 1-byte heartbeat message type and advances the pointer.",
+          "11": "`n2s` reads a 2-byte big-endian length from the request into `payload` — this value is attacker-supplied.",
+          "12": "`pl` now points at the payload bytes within the received request buffer.",
+          "20": "Allocates the response buffer, sized from the attacker's claimed `payload` length.",
+          "23": "Writes the response type byte.",
+          "24": "`s2n` writes the 2-byte payload length into the response.",
+          "25": "Copies `payload` bytes starting at `pl` into the response.",
+          "27": "Appends 16 random padding bytes.",
+          "29": "Sends the assembled response back to the peer."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "t1_lib.c",
+      "line": 26,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "oob-read",
+      "options": [
+        "oob-read",
+        "buffer-overflow",
+        "int-overflow",
+        "use-after-free",
+        "null-deref",
+        "format-string",
+        "toctou"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "`OPENSSL_malloc` can return NULL for a huge length, so `bp` is dereferenced on a null pointer",
+          "whyWrong": "Allocation failure is a separate, lesser issue. The disclosure happens because the copy reads from the request buffer beyond what was received."
+        },
+        {
+          "label": "`payload` is attacker-controlled and never checked against the real record length, so `memcpy` reads past the received data into adjacent process memory"
+        },
+        {
+          "label": "`RAND_pseudo_bytes` is not cryptographically secure, so the padding is predictable",
+          "whyWrong": "Padding quality is irrelevant to the leak; the response echoes memory that was never part of the request."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "Reject requests whose claimed length exceeds the record, and drop 0-length",
+          "diff": " /* Read type and payload length first */\n hbtype = *p++;\n+    if (1 + 2 + 16 > s->s3->rrec.length)\n+        return 0;            /* silently discard per RFC 6520 */\n n2s(p, payload);\n+    if (1 + 2 + payload + 16 > s->s3->rrec.length)\n+        return 0;            /* claimed length overruns the record */\n pl = p;"
+        },
+        {
+          "label": "Cap the payload length at a fixed maximum",
+          "diff": " n2s(p, payload);\n+    if (payload > 16384)\n+        payload = 16384;\n pl = p;",
+          "whyWrong": "Clamping to a constant still lets the request claim a length larger than the actual record, so the memcpy reads past the received data. The length must be checked against the real record length, not a fixed cap."
+        },
+        {
+          "label": "Zero the response buffer before copying",
+          "diff": " buffer = OPENSSL_malloc(1 + 2 + payload + padding);\n+    memset(buffer, 0, 1 + 2 + payload + padding);\n bp = buffer;",
+          "whyWrong": "This addresses the destination, not the source. The leak is the over-read from `pl` (the request buffer), which is copied into the response regardless of how the buffer was initialised."
+        },
+        {
+          "label": "Use the returned length from a checked read of the payload",
+          "diff": "-    memcpy(bp, pl, payload);\n+    memcpy(bp, pl, strlen((char *)pl));",
+          "whyWrong": "`strlen` on binary TLS data is meaningless and itself reads out of bounds until it finds a NUL. It does not bound the copy to the record and introduces a second over-read."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "cve",
+    "cve": "CVE-2014-0160",
+    "project": "OpenSSL",
+    "fixCommit": "https://github.com/openssl/openssl/commit/96db9023b881d7cd9f379b0c154650d6c108e9a3",
+    "advisory": "https://www.openssl.org/news/secadv/20140407.txt",
+    "license": "OpenSSL",
+    "attribution": "OpenSSL Project, CVE-2014-0160 (Heartbleed)"
+  },
+  "training": {
+    "exploit": "Send a heartbeat request with a tiny actual payload but a claimed `payload` length of 65535. The server allocates a 64 KB response and `memcpy` copies 64 KB starting at `pl`, scooping up whatever follows the request in memory — private keys, session cookies, other users' plaintext — and returns it. Repeat to walk large swaths of server memory, no authentication required.",
+    "concepts": ["CWE-125", "CVE-2014-0160"],
+    "hints": {
+      "line": "Find where bytes are copied using a length the client supplied.",
+      "bugClass": "Nothing is written out of bounds — but something is read that shouldn't be.",
+      "why": "Compare `payload` against how many bytes actually arrived.",
+      "fix": "Validate the claimed length against `s->s3->rrec.length` before copying."
+    }
+  },
+  "writeup": {
+    "summary": "`payload` is a 16-bit length read straight from the heartbeat request with `n2s`, but the code never checks it against the actual length of the record received (`s->s3->rrec.length`). An attacker sends a tiny heartbeat that *claims* a 65535-byte payload; `memcpy(bp, pl, payload)` then copies 64 KB starting at the request buffer, sweeping up whatever adjacent process memory follows it — private keys, session data, other users' requests — and sends it back in the response. This is an out-of-bounds read (information disclosure), not a write-based overflow. The real fix adds two guards: discard records too short to even hold a heartbeat, and reject any request whose claimed length plus padding exceeds the record. This is Heartbleed.",
+    "readNext": [
+      {
+        "label": "OpenSSL fix commit 96db9023",
+        "url": "https://github.com/openssl/openssl/commit/96db9023b881d7cd9f379b0c154650d6c108e9a3"
+      },
+      {
+        "label": "Heartbleed advisory (CVE-2014-0160)",
+        "url": "https://www.openssl.org/news/secadv/20140407.txt"
+      },
+      {
+        "label": "RFC 6520 — TLS Heartbeat Extension",
+        "url": "https://www.rfc-editor.org/rfc/rfc6520"
+      }
+    ]
+  }
+}

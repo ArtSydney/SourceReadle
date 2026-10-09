@@ -1,0 +1,54 @@
+name: Generate puzzles
+
+# Keeps a rolling buffer of upcoming days drafted and committed, so the daily
+# game is always fresh. Needs the secret ANTHROPIC_API_KEY; without it the step
+# no-ops and rotation (in build-site.mjs) covers the days instead — the site
+# never breaks. Each draft is self-validated before it's written.
+
+on:
+  schedule:
+    - cron: "0 1 * * *"      # daily 01:00 UTC — tops up the buffer
+  workflow_dispatch:
+    inputs:
+      buffer:
+        description: "Days ahead to keep filled"
+        required: false
+        default: "14"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: generate
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Draft upcoming puzzles
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SRD_MODEL: ${{ vars.SRD_MODEL }}
+          SRD_BUFFER: ${{ github.event.inputs.buffer || vars.SRD_BUFFER || '14' }}
+        run: node scripts/generate-backlog.mjs
+
+      - name: Validate everything
+        run: node scripts/validate.mjs
+
+      - name: Commit new puzzles
+        run: |
+          git config user.name "sourcereadle-bot"
+          git config user.email "actions@github.com"
+          if [ -z "$(git status --porcelain puzzles)" ]; then
+            echo "No new puzzles to commit."
+            exit 0
+          fi
+          git add puzzles
+          git commit -m "Auto-generate upcoming puzzles [skip ci]"
+          git push

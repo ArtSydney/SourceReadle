@@ -1,0 +1,105 @@
+{
+  "id": "srd-0026",
+  "date": "2026-10-18",
+  "difficulty": "medium",
+  "language": "go",
+  "estimatedMinutes": 15,
+  "snippet": {
+    "files": [
+      {
+        "name": "users.go",
+        "code": "package main\n\nimport (\n\t\"database/sql\"\n\t\"fmt\"\n)\n\n// Find users whose name matches the search term.\nfunc search(db *sql.DB, term string) (*sql.Rows, error) {\n\tq := fmt.Sprintf(\"SELECT id, name FROM users WHERE name LIKE '%%%s%%'\", term)\n\treturn db.Query(q)\n}",
+        "notes": {
+          "9": "Search helper taking a user-supplied `term`.",
+          "10": "Builds the SQL by formatting `term` into a LIKE pattern (`%%` is a literal percent).",
+          "11": "Runs the assembled query string."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "users.go",
+      "line": 10,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "sqli",
+      "options": [
+        "sqli",
+        "code-inj",
+        "command-inj",
+        "idor",
+        "ssrf"
+      ]
+    },
+    "why": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "`fmt.Sprintf` is slow for building large queries",
+          "whyWrong": "Performance isn't the issue; the input becomes part of the SQL."
+        },
+        {
+          "label": "`db.Query` keeps the rows open and can leak connections",
+          "whyWrong": "Resource handling is unrelated to the injection."
+        },
+        {
+          "label": "`term` is formatted straight into the query text, so the database parses it as SQL rather than as a search value"
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Escape single quotes in term",
+          "diff": "+\tterm = strings.ReplaceAll(term, \"'\", \"''\")\n \tq := fmt.Sprintf(...)",
+          "whyWrong": "Manual escaping is database-specific and incomplete; parameters are the correct boundary."
+        },
+        {
+          "label": "Use a parameterized query and pass term as an argument",
+          "diff": "-\tq := fmt.Sprintf(\"SELECT id, name FROM users WHERE name LIKE '%%%s%%'\", term)\n-\treturn db.Query(q)\n+\treturn db.Query(\"SELECT id, name FROM users WHERE name LIKE ?\", \"%\"+term+\"%\")"
+        },
+        {
+          "label": "Reject term if it contains a space",
+          "diff": "+\tif strings.Contains(term, \" \") { return nil, errBad }",
+          "whyWrong": "Injection needs no spaces, and legitimate names contain them."
+        },
+        {
+          "label": "Use QueryContext with a timeout",
+          "diff": "-\treturn db.Query(q)\n+\treturn db.QueryContext(ctx, q)",
+          "whyWrong": "A timeout changes nothing about how the query text is parsed."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Search for `%' UNION SELECT password, name FROM users -- `. The formatted query closes the LIKE pattern and appends a UNION, returning password hashes in place of names. A `'; DROP TABLE ...` style payload is possible where multiple statements are allowed.",
+    "concepts": [
+      "CWE-89",
+      "OWASP A03:2021"
+    ],
+    "hints": {
+      "line": "Where does the term become part of the SQL text?",
+      "bugClass": "The sink is a database query.",
+      "why": "Does the database see `term` as data or as query syntax?",
+      "fix": "Bind the value as a parameter with `?`."
+    }
+  },
+  "writeup": {
+    "summary": "`fmt.Sprintf` builds the query by splicing `term` into the SQL text, so the database parses attacker input as SQL — the `LIKE` context is still injectable. Passing the value through a placeholder (`db.Query(\"... LIKE ?\", \"%\"+term+\"%\")`) sends it as a bound parameter the driver never interprets as query structure. Escaping and character blocklists are weaker and bypassable.",
+    "readNext": [
+      {
+        "label": "Go database/sql: avoiding SQL injection",
+        "url": "https://go.dev/doc/database/sql-injection"
+      }
+    ]
+  }
+}

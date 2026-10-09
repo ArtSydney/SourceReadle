@@ -1,0 +1,105 @@
+{
+  "id": "srd-0035",
+  "date": "2026-10-21",
+  "difficulty": "medium",
+  "language": "ruby",
+  "estimatedMinutes": 15,
+  "snippet": {
+    "files": [
+      {
+        "name": "import.rb",
+        "code": "require \"yaml\"\n\n# Import settings a user uploaded as a YAML document.\ndef import_settings(yaml_text)\n  settings = YAML.load(yaml_text)\n  apply(settings)\nend",
+        "notes": {
+          "4": "Takes YAML text uploaded by the user.",
+          "5": "Parses it. Classic `YAML.load` (Psych < 4 / `unsafe_load`) can build arbitrary Ruby objects.",
+          "6": "Applies the resulting settings object."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "import.rb",
+      "line": 5,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "insecure-deser",
+      "options": [
+        "insecure-deser",
+        "code-inj",
+        "xxe",
+        "sqli",
+        "idor",
+        "ssrf"
+      ]
+    },
+    "why": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "`YAML.load` instantiates arbitrary Ruby objects from tags like `!ruby/object:...`, so a crafted document can assemble a gadget chain and execute code during parsing"
+        },
+        {
+          "label": "`YAML.load` is slower than `JSON.parse`",
+          "whyWrong": "Performance is irrelevant to the code-execution risk."
+        },
+        {
+          "label": "`apply` may receive nil if the YAML is empty",
+          "whyWrong": "A nil check is robustness, not the deserialization flaw."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Wrap YAML.load in begin/rescue",
+          "diff": "-  settings = YAML.load(yaml_text)\n+  settings = begin; YAML.load(yaml_text); rescue; {}; end",
+          "whyWrong": "Object construction (and the gadget) happens during load; rescuing afterward is too late."
+        },
+        {
+          "label": "Use YAML.safe_load with an allowlist of permitted classes",
+          "diff": "-  settings = YAML.load(yaml_text)\n+  settings = YAML.safe_load(yaml_text, permitted_classes: [Symbol, Date])"
+        },
+        {
+          "label": "Check that settings is a Hash after loading",
+          "diff": "-  settings = YAML.load(yaml_text)\n+  settings = YAML.load(yaml_text)\n+  raise unless settings.is_a?(Hash)",
+          "whyWrong": "The dangerous objects are already instantiated during load, before the type check runs."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original (unsafe YAML.load / Psych)"
+  },
+  "training": {
+    "exploit": "Upload a YAML document using object tags (e.g. `!ruby/object:...`) that reconstruct a known gadget chain — historically via classes reachable in Rails/Gem — so that merely loading it runs an attacker command. The payload executes while `YAML.load` builds the object graph, before `apply` is ever called.",
+    "concepts": [
+      "CWE-502",
+      "OWASP A08:2021"
+    ],
+    "hints": {
+      "line": "The sink turns text into live Ruby objects.",
+      "bugClass": "Untrusted input becomes arbitrary objects.",
+      "why": "What can a YAML `!ruby/object` tag construct?",
+      "fix": "Restrict which classes the parser may build."
+    }
+  },
+  "writeup": {
+    "summary": "Classic `YAML.load` (Psych before 4, and `unsafe_load` after) deserializes arbitrary Ruby objects via tags such as `!ruby/object:`, so an uploaded document can assemble a gadget chain and execute code during parsing. `YAML.safe_load` with an explicit `permitted_classes` list restricts construction to benign types, treating the input as data. Rescuing exceptions or type-checking the result is too late — the objects are built (and the gadget fires) during the load itself.",
+    "readNext": [
+      {
+        "label": "Ruby Psych: load vs safe_load",
+        "url": "https://docs.ruby-lang.org/en/master/Psych.html"
+      },
+      {
+        "label": "OWASP Deserialization Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html"
+      }
+    ]
+  }
+}

@@ -1,0 +1,78 @@
+name: Daily publish
+
+on:
+  schedule:
+    - cron: "5 0 * * *"      # 00:05 UTC daily — new day's puzzles go live
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  issues: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Validate puzzles
+        run: node scripts/validate.mjs
+
+      - name: Build site (today's cutoff)
+        run: node scripts/build-site.mjs
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  backlog:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check backlog depth
+        id: check
+        run: node scripts/backlog-check.mjs --github
+
+      - name: Open an issue when the backlog is low
+        if: steps.check.outputs.low == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title="Backlog low: ${{ steps.check.outputs.future_days }} day(s) queued"
+          gh label create backlog-low --color FBCA04 --description "Puzzle backlog running low" --force
+          # Avoid duplicate open issues with the same label.
+          existing=$(gh issue list --label backlog-low --state open --json number --jq 'length')
+          if [ "$existing" = "0" ]; then
+            gh issue create --label backlog-low \
+              --title "$title" \
+              --body "Only ${{ steps.check.outputs.future_days }} future day(s) of puzzles remain (${{ steps.check.outputs.future_puzzles }} puzzles). Time to generate a new batch — see CONTRIBUTING.md."
+          else
+            echo "An open backlog-low issue already exists; skipping."
+          fi

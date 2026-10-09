@@ -1,0 +1,105 @@
+{
+  "id": "srd-0031",
+  "date": "2026-10-20",
+  "difficulty": "easy",
+  "language": "javascript",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "db.js",
+        "code": "const mysql = require(\"mysql2\");\nconst pool = mysql.createPool({ /* ... */ });\n\nfunction getOrder(orderId, cb) {\n  // Fetch an order by id.\n  const sql = `SELECT * FROM orders WHERE id = ${orderId}`;\n  pool.query(sql, cb);\n}",
+        "notes": {
+          "4": "Fetches an order; `orderId` comes from the request.",
+          "6": "Builds the SQL with a template literal, interpolating `orderId` into the text.",
+          "7": "Runs the assembled query."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "db.js",
+      "line": 6,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "sqli",
+      "options": [
+        "sqli",
+        "code-inj",
+        "idor",
+        "command-inj",
+        "ssrf"
+      ]
+    },
+    "why": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "Template literals are slower than string concatenation",
+          "whyWrong": "Performance is irrelevant; the interpolation into SQL is the problem."
+        },
+        {
+          "label": "`pool.query` reuses connections, which can mix up results",
+          "whyWrong": "Pooling is safe and unrelated to the injection."
+        },
+        {
+          "label": "`orderId` is interpolated into the SQL text, so the database parses attacker input as part of the query"
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Wrap orderId in quotes in the template",
+          "diff": "-  const sql = `SELECT * FROM orders WHERE id = ${orderId}`;\n+  const sql = `SELECT * FROM orders WHERE id = '${orderId}'`;",
+          "whyWrong": "Still interpolated; `' OR '1'='1` closes the quote and injects."
+        },
+        {
+          "label": "Use a parameterized query with ? and pass orderId as a bound value",
+          "diff": "-  const sql = `SELECT * FROM orders WHERE id = ${orderId}`;\n-  pool.query(sql, cb);\n+  pool.query(\"SELECT * FROM orders WHERE id = ?\", [orderId], cb);"
+        },
+        {
+          "label": "Remove quotes and semicolons from orderId",
+          "diff": "+  orderId = String(orderId).replace(/['\";]/g, \"\");",
+          "whyWrong": "UNION-based and comment-based payloads need neither quotes nor semicolons."
+        },
+        {
+          "label": "Cast orderId with String()",
+          "diff": "+  orderId = String(orderId);",
+          "whyWrong": "It's already text; casting changes nothing about how the database parses it."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Call with `orderId = \"0 OR 1=1\"` to return every order, or `0 UNION SELECT username, password, 1, 1 FROM users` to read other tables. No quotes are even required because the id sits in a numeric context.",
+    "concepts": [
+      "CWE-89",
+      "OWASP A03:2021"
+    ],
+    "hints": {
+      "line": "Where does the id become part of the query text?",
+      "bugClass": "The sink is a SQL query.",
+      "why": "Numeric context still lets the input change the query — how?",
+      "fix": "Bind the value with a `?` placeholder."
+    }
+  },
+  "writeup": {
+    "summary": "The template literal splices `orderId` into the SQL string, so the database parses attacker input as query syntax — and numeric contexts need no quotes to exploit (`0 OR 1=1`, `UNION SELECT ...`). A parameterized query (`pool.query(\"... id = ?\", [orderId])`) sends the value as data the driver never treats as SQL. Quoting and character stripping are both bypassable.",
+    "readNext": [
+      {
+        "label": "node-mysql2 prepared statements",
+        "url": "https://github.com/sidorares/node-mysql2#using-prepared-statements"
+      }
+    ]
+  }
+}

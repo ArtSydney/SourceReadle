@@ -1,0 +1,109 @@
+{
+  "id": "srd-0033",
+  "date": "2026-10-20",
+  "difficulty": "hard",
+  "language": "c",
+  "estimatedMinutes": 30,
+  "snippet": {
+    "files": [
+      {
+        "name": "cgi_main.c",
+        "code": "/* Simplified from php-cgi query-string handling, pre-patch (CVE-2012-1823). */\n/* If the query string has no unencoded '=', treat it as CLI arguments. */\nif (query_string != NULL && strchr(query_string, '=') == NULL) {\n    decoded = url_decode(query_string);\n    php_build_argv(decoded, &argc, &argv);   /* e.g. \"-d\", \"auto_prepend_file=...\" */\n    cgi_handle_args(argc, argv);             /* php interprets -d / -s / -r flags */\n}",
+        "notes": {
+          "3": "If a query string is present and contains no `=`, enter this block.",
+          "4": "URL-decodes the query string.",
+          "5": "Splits it into argc/argv as if they were command-line arguments.",
+          "6": "Hands those to PHP's CLI argument handler, which honors flags like -d, -s, -r."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "cgi_main.c",
+      "line": 3,
+      "yellowRadius": 3,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "code-inj",
+      "options": [
+        "code-inj",
+        "command-inj",
+        "path-traversal",
+        "insecure-deser",
+        "ssrf",
+        "format-string"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "`url_decode` can overflow for a very long query string",
+          "whyWrong": "No overflow is implied here; the flaw is forwarding the query string to the CLI parser."
+        },
+        {
+          "label": "A query string with no `=` is handed to PHP's CLI argument parser, so an attacker passes flags like `-d auto_prepend_file=php://input` to execute arbitrary PHP"
+        },
+        {
+          "label": "`strchr` returns NULL for an empty string, skipping the block",
+          "whyWrong": "An edge case in the check, not the remote-code-execution mechanism."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Reject query strings that begin with '-'",
+          "diff": "+    if (query_string[0] == '-') return;\n     if (query_string != NULL && strchr(...) == NULL) {",
+          "whyWrong": "Arguments can be reordered or separated so a flag isn't first; the CLI parser is still reachable."
+        },
+        {
+          "label": "Do not pass HTTP query strings to the CLI argument parser when running as CGI/FastCGI",
+          "diff": "-if (query_string != NULL && strchr(query_string, '=') == NULL) {\n-    decoded = url_decode(query_string);\n-    php_build_argv(decoded, &argc, &argv);\n-    cgi_handle_args(argc, argv);\n-}\n+/* In CGI/FastCGI mode, never interpret the query string as CLI args. */\n+if (!cgi_sapi) {\n+    /* argv handling only for the real command line */\n+}"
+        },
+        {
+          "label": "Block the substring 'auto_prepend_file' in the query string",
+          "diff": "+    if (strstr(query_string, \"auto_prepend_file\")) return;",
+          "whyWrong": "Other flags (-r to run code, -s to leak source, -d with different settings) still achieve execution or disclosure."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "cve",
+    "cve": "CVE-2012-1823",
+    "project": "PHP (php-cgi)",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2012-1823",
+    "license": "PHP-3.01",
+    "attribution": "PHP php-cgi, CVE-2012-1823, simplified"
+  },
+  "training": {
+    "exploit": "Request `/index.php?-d+allow_url_include%3d1+-d+auto_prepend_file%3dphp://input` with a POST body of `<?php system('id'); ?>`. Because the query string has no decoded `=`, php-cgi treats it as CLI flags, prepends the request body as a PHP file, and executes it — unauthenticated RCE. `?-s` alone discloses the script's source.",
+    "concepts": [
+      "CWE-94",
+      "CVE-2012-1823"
+    ],
+    "hints": {
+      "line": "The fateful decision is whether to treat the query string as CLI args.",
+      "bugClass": "Attacker input becomes interpreter flags that run code.",
+      "why": "What do PHP flags like -d/-r let you do?",
+      "fix": "In CGI mode, never route the query string to the argv parser."
+    }
+  },
+  "writeup": {
+    "summary": "php-cgi treated a query string with no decoded `=` as command-line arguments and passed it to PHP's CLI flag parser. An attacker supplies `-d`/`-r`/`-s` flags — classically `-d auto_prepend_file=php://input` plus a PHP body in the POST — to execute arbitrary code, or `-s` to disclose source. The correct fix is to never interpret HTTP query strings as CLI arguments when running as CGI/FastCGI; blocklisting specific flags or leading dashes leaves other flags reachable.",
+    "readNext": [
+      {
+        "label": "CVE-2012-1823 (NVD)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2012-1823"
+      },
+      {
+        "label": "PHP bug #61910",
+        "url": "https://bugs.php.net/bug.php?id=61910"
+      }
+    ]
+  }
+}

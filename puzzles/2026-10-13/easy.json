@@ -1,0 +1,111 @@
+{
+  "id": "srd-0010",
+  "date": "2026-10-13",
+  "difficulty": "easy",
+  "language": "javascript",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "calc.js",
+        "code": "const http = require(\"http\");\n\nfunction handler(req, res) {\n  const url = new URL(req.url, \"http://localhost\");\n  const expr = url.searchParams.get(\"expr\");\n  // Evaluate the arithmetic expression the user asked for.\n  const result = eval(expr);\n  res.end(String(result));\n}\n\nhttp.createServer(handler).listen(3000);",
+        "notes": {
+          "4": "Parses the request URL so query parameters can be read.",
+          "5": "Reads the `expr` query parameter — fully attacker-controlled.",
+          "7": "Runs `expr` through JavaScript's `eval`.",
+          "8": "Sends the computed result back to the client.",
+          "11": "Starts the HTTP server on port 3000."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "calc.js",
+      "line": 7,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "code-inj",
+      "options": [
+        "code-inj",
+        "sqli",
+        "command-inj",
+        "ssrf",
+        "open-redirect"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "`eval` is slow, so many requests degrade performance",
+          "whyWrong": "Performance is irrelevant; the problem is that the input is executed as code."
+        },
+        {
+          "label": "`expr` is passed to `eval`, so any JavaScript in it runs with the server's privileges"
+        },
+        {
+          "label": "`String(result)` can throw when the result is an object",
+          "whyWrong": "A formatting error is trivial next to arbitrary code execution."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Run eval inside a try/catch so errors don't crash the server",
+          "diff": "-  const result = eval(expr);\n+  let result;\n+  try { result = eval(expr); } catch { result = \"error\"; }",
+          "whyWrong": "Catching errors does nothing to stop the attacker's code from executing first."
+        },
+        {
+          "label": "Parse the expression with a dedicated math parser instead of eval",
+          "diff": "-  const result = eval(expr);\n+  const result = evaluateArithmetic(expr); // a real parser, no code execution"
+        },
+        {
+          "label": "Cast expr to a number before evaluating",
+          "diff": "-  const result = eval(expr);\n+  const result = eval(Number(expr));",
+          "whyWrong": "`Number(expr)` of a non-numeric string is NaN, and this still calls eval — the pattern is unchanged."
+        },
+        {
+          "label": "Set the response content type to text/plain",
+          "diff": "+  res.setHeader(\"Content-Type\", \"text/plain\");\n   const result = eval(expr);",
+          "whyWrong": "Response headers have nothing to do with executing the input."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Request `?expr=process.mainModule.require('child_process').execSync('id').toString()`. `eval` runs it, so the server executes `id` (or any command) and returns the output — full remote code execution.",
+    "concepts": [
+      "CWE-95",
+      "OWASP A03:2021"
+    ],
+    "hints": {
+      "line": "Find where user input is executed rather than just used.",
+      "bugClass": "The input becomes running code.",
+      "why": "What can `eval` run besides arithmetic?",
+      "fix": "Never eval user input — parse it instead."
+    }
+  },
+  "writeup": {
+    "summary": "`eval(expr)` executes the query parameter as JavaScript in the server process. Anything the Node runtime can do — read files, spawn processes, open sockets — an attacker can do by sending it as `expr`. The fix is to never pass untrusted input to `eval`; evaluate arithmetic with a dedicated parser that treats the input purely as data.",
+    "readNext": [
+      {
+        "label": "MDN: eval() — never use with untrusted input",
+        "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/eval"
+      },
+      {
+        "label": "OWASP Code Injection",
+        "url": "https://owasp.org/www-community/attacks/Code_Injection"
+      }
+    ]
+  }
+}

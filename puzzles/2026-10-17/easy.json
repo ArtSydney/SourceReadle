@@ -1,0 +1,107 @@
+{
+  "id": "srd-0022",
+  "date": "2026-10-17",
+  "difficulty": "easy",
+  "language": "python",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "auth.py",
+        "code": "import hashlib\n\ndef hash_password(password):\n    # Store a hash of the user's password.\n    return hashlib.md5(password.encode()).hexdigest()\n\ndef verify(password, stored_hash):\n    return hash_password(password) == stored_hash",
+        "notes": {
+          "3": "Turns a plaintext password into the value stored in the database.",
+          "5": "Hashes the password with MD5 and returns the hex string.",
+          "7": "Checks a login by hashing the attempt and comparing to the stored hash.",
+          "8": "Compares the two hashes for equality."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "auth.py",
+      "line": 5,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "weak-crypto",
+      "options": [
+        "weak-crypto",
+        "hardcoded-secret",
+        "sqli",
+        "idor",
+        "insecure-deser"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "MD5 outputs only 128 bits, too short to store safely",
+          "whyWrong": "Output length isn't the problem; MD5's speed and lack of salt are."
+        },
+        {
+          "label": "MD5 is a fast, unsalted hash, so if the database leaks, passwords are recovered quickly with rainbow tables or GPU brute force"
+        },
+        {
+          "label": "`hexdigest()` returns a string instead of bytes, wasting storage",
+          "whyWrong": "Representation is irrelevant to the security weakness."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Hash with SHA-256 instead of MD5",
+          "diff": "-    return hashlib.md5(password.encode()).hexdigest()\n+    return hashlib.sha256(password.encode()).hexdigest()",
+          "whyWrong": "SHA-256 is also a fast, general-purpose hash; it's cracked at billions of guesses per second. Password storage needs a deliberately slow, salted function."
+        },
+        {
+          "label": "Use a slow, salted password hash such as bcrypt or Argon2",
+          "diff": "-    import hashlib\n-    return hashlib.md5(password.encode()).hexdigest()\n+    import bcrypt\n+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()"
+        },
+        {
+          "label": "MD5 the password twice",
+          "diff": "-    return hashlib.md5(password.encode()).hexdigest()\n+    return hashlib.md5(hashlib.md5(password.encode()).hexdigest().encode()).hexdigest()",
+          "whyWrong": "Two rounds of a fast hash is still fast and still unsalted; identical passwords still collide."
+        },
+        {
+          "label": "Prepend a fixed secret string before hashing",
+          "diff": "-    return hashlib.md5(password.encode()).hexdigest()\n+    return hashlib.md5((\"s3cret\" + password).encode()).hexdigest()",
+          "whyWrong": "A static pepper with no per-user salt and no slow KDF still falls to fast offline cracking, especially if the code/secret leaks too."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "After any database leak, an attacker runs a tool like hashcat against the unsalted MD5 digests at billions of guesses per second, recovering most passwords within minutes. Because there's no salt, identical passwords share a digest and precomputed rainbow tables apply directly.",
+    "concepts": [
+      "CWE-916",
+      "CWE-759",
+      "OWASP A02:2021"
+    ],
+    "hints": {
+      "line": "Look at which algorithm turns the password into stored data.",
+      "bugClass": "The weakness is in the cryptographic choice.",
+      "why": "How fast can an attacker try guesses against this hash offline?",
+      "fix": "Use a slow, salted password-hashing function."
+    }
+  },
+  "writeup": {
+    "summary": "MD5 is fast and used here without a per-user salt, so a leaked password table is trivially cracked: GPUs try billions of candidates per second, rainbow tables cover common passwords, and identical passwords produce identical hashes. Password storage needs a purpose-built, slow, salted KDF — bcrypt, scrypt, or Argon2 — which makes each guess expensive and unique per user. Switching to SHA-256 or double-MD5 doesn't help; the point is deliberate slowness plus salting.",
+    "readNext": [
+      {
+        "label": "OWASP Password Storage Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
+      }
+    ]
+  }
+}

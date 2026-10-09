@@ -1,0 +1,113 @@
+{
+  "id": "srd-0008",
+  "date": "2026-10-12",
+  "difficulty": "medium",
+  "language": "csharp",
+  "estimatedMinutes": 15,
+  "snippet": {
+    "files": [
+      {
+        "name": "InvoiceImporter.cs",
+        "code": "using System.Xml;\n\npublic class InvoiceImporter\n{\n    // Parse an invoice XML document uploaded by a partner.\n    public Invoice Parse(string xml)\n    {\n        var doc = new XmlDocument();\n        doc.XmlResolver = new XmlUrlResolver();\n        doc.LoadXml(xml);\n\n        var total = doc.SelectSingleNode(\"/invoice/total\")?.InnerText;\n        var customer = doc.SelectSingleNode(\"/invoice/customer\")?.InnerText;\n        return new Invoice(customer, decimal.Parse(total));\n    }\n}\n",
+        "notes": {
+          "8": "Creates an in-memory XML document object.",
+          "9": "Assigns a URL resolver, which tells the parser it may fetch external entities and DTDs.",
+          "10": "Parses the XML text — this is where entities are expanded and any external references resolved.",
+          "12": "Reads the text of the <total> element.",
+          "13": "Reads the text of the <customer> element.",
+          "14": "Builds the Invoice from those values."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "InvoiceImporter.cs",
+      "line": 9,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "xxe",
+      "options": [
+        "xxe",
+        "insecure-deser",
+        "ssrf",
+        "path-traversal",
+        "code-inj",
+        "sqli"
+      ]
+    },
+    "why": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "Assigning an `XmlUrlResolver` makes `LoadXml` resolve external entities, so a declared SYSTEM entity reads local files or hits internal URLs during parsing"
+        },
+        {
+          "label": "`decimal.Parse(total)` throws on non-numeric input, letting an attacker crash the importer",
+          "whyWrong": "A parse exception is a robustness bug, not the disclosure/SSRF primitive the resolver creates."
+        },
+        {
+          "label": "The XPath in `SelectSingleNode` is built from input and can be injected",
+          "whyWrong": "The XPath strings here are constant; nothing user-controlled is concatenated into them."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "Disable the resolver so external entities are not fetched",
+          "diff": "-        doc.XmlResolver = new XmlUrlResolver();\n+        doc.XmlResolver = null;   // no external entity / DTD resolution\n         doc.LoadXml(xml);"
+        },
+        {
+          "label": "Validate the XML against a schema after loading",
+          "diff": "         doc.LoadXml(xml);\n+        doc.Schemas.Add(InvoiceSchema);\n+        doc.Validate(null);",
+          "whyWrong": "Entity expansion happens during LoadXml, before validation runs, so external entities are already resolved and any SSRF/file read has occurred."
+        },
+        {
+          "label": "HTML-encode the parsed values before use",
+          "diff": "-        var customer = doc.SelectSingleNode(\"/invoice/customer\")?.InnerText;\n+        var customer = WebUtility.HtmlEncode(\n+            doc.SelectSingleNode(\"/invoice/customer\")?.InnerText);",
+          "whyWrong": "Output encoding addresses a different problem (XSS). It does nothing about entities resolved during parsing."
+        },
+        {
+          "label": "Wrap parsing in a size limit",
+          "diff": "+        if (xml.Length > 1_000_000) throw new InvalidDataException();\n         doc.LoadXml(xml);",
+          "whyWrong": "A size cap mitigates one DoS variant (billion laughs) but still allows a small document with an external entity to read local files or make server-side requests."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original (classic .NET XXE via XmlUrlResolver)"
+  },
+  "training": {
+    "exploit": "Upload an invoice beginning with `<!DOCTYPE invoice [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>` and put `&x;` inside `<customer>`. During `LoadXml`, the parser reads the file and the customer value becomes its contents — which the app then stores or echoes. Swap in `SYSTEM \"http://169.254.169.254/latest/meta-data/\"` to pivot into server-side request forgery against internal services.",
+    "concepts": [
+      "CWE-611",
+      "OWASP A05:2021"
+    ],
+    "hints": {
+      "line": "One line flips the parser from safe to fetch-anything.",
+      "bugClass": "It's about what the XML parser will go and load.",
+      "why": "What does a resolver let a `<!ENTITY ... SYSTEM ...>` do?",
+      "fix": "Turn external resolution off entirely."
+    }
+  },
+  "writeup": {
+    "summary": "Setting `XmlResolver = new XmlUrlResolver()` tells the parser to resolve external entities and DTDs. A document declaring `<!ENTITY x SYSTEM \"file:///etc/passwd\">` and referencing `&x;` inside `<customer>` makes the parser read that file and place its contents in the parsed value; a `http://` system id turns it into server-side request forgery against internal hosts. On modern .NET the default resolver is already null, but explicitly assigning one re-enables the danger. The fix sets `XmlResolver = null`, so external references are never fetched. Schema validation and output encoding address other stages and don't stop entity resolution during `LoadXml`.",
+    "readNext": [
+      {
+        "label": "OWASP XXE Prevention Cheat Sheet (.NET)",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html#net"
+      },
+      {
+        "label": "Microsoft: XmlResolver and secure XML parsing",
+        "url": "https://learn.microsoft.com/en-us/dotnet/standard/data/xml/resolving-external-resources"
+      }
+    ]
+  }
+}

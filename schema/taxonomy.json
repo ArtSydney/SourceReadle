@@ -1,0 +1,39 @@
+{
+  "description": "Bug classes used in stage 2. 'family' drives yellow feedback: a guess in the right family but wrong class shows yellow. Labels are what the player sees.",
+  "families": {
+    "injection": "Injection",
+    "memory": "Memory safety",
+    "numeric": "Numeric errors",
+    "auth": "Auth & access control",
+    "path": "Path & resource resolution",
+    "crypto": "Cryptography",
+    "deserialization": "Deserialization & parsing",
+    "web": "Web / request handling",
+    "race": "Concurrency"
+  },
+  "classes": {
+    "sqli":          { "label": "SQL injection",              "family": "injection" },
+    "command-inj":   { "label": "OS command injection",       "family": "injection" },
+    "code-inj":      { "label": "Code injection / eval",       "family": "injection" },
+    "format-string": { "label": "Format string",              "family": "injection" },
+    "log-inj":       { "label": "Log / expression injection",  "family": "injection" },
+    "buffer-overflow":{ "label": "Buffer overflow",            "family": "memory" },
+    "use-after-free":{ "label": "Use-after-free",             "family": "memory" },
+    "oob-read":      { "label": "Out-of-bounds read",          "family": "memory" },
+    "null-deref":    { "label": "Null pointer dereference",    "family": "memory" },
+    "int-overflow":  { "label": "Integer overflow",            "family": "numeric" },
+    "sign-confusion":{ "label": "Signed/unsigned confusion",   "family": "numeric" },
+    "auth-bypass":   { "label": "Authentication bypass",       "family": "auth" },
+    "missing-authz": { "label": "Missing authorization",       "family": "auth" },
+    "idor":          { "label": "Insecure direct object ref",  "family": "auth" },
+    "path-traversal":{ "label": "Path traversal",              "family": "path" },
+    "zip-slip":      { "label": "Zip slip",                     "family": "path" },
+    "ssrf":          { "label": "Server-side request forgery", "family": "web" },
+    "open-redirect": { "label": "Open redirect",               "family": "web" },
+    "xxe":           { "label": "XML external entity",         "family": "deserialization" },
+    "insecure-deser":{ "label": "Insecure deserialization",    "family": "deserialization" },
+    "weak-crypto":   { "label": "Weak / broken crypto",        "family": "crypto" },
+    "hardcoded-secret":{ "label": "Hardcoded secret",          "family": "crypto" },
+    "toctou":        { "label": "TOCTOU race",                 "family": "race" }
+  }
+}

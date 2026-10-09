@@ -1,0 +1,109 @@
+{
+  "id": "srd-0021",
+  "date": "2026-10-16",
+  "difficulty": "hard",
+  "language": "php",
+  "estimatedMinutes": 30,
+  "snippet": {
+    "files": [
+      {
+        "name": "mail.php",
+        "code": "// Simplified from PHPMailer mailSend(), pre-5.2.18 (CVE-2016-10033).\npublic function mailSend($header, $body) {\n    $sender = $this->Sender;                 // taken from the From address\n    if ($sender != '') {\n        // Pass the envelope sender to sendmail via -f.\n        $params = sprintf('-oi -f%s', escapeshellcmd($sender));\n        mail($this->to, $this->subj, $body, $header, $params);\n    }\n}",
+        "notes": {
+          "3": "The envelope sender, derived from the user-supplied From address.",
+          "4": "Only act if a sender was set.",
+          "6": "Builds the extra-parameters string for sendmail, escaping the sender with escapeshellcmd.",
+          "7": "Calls PHP's mail(); the 5th argument is passed on sendmail's command line."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "mail.php",
+      "line": 6,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "command-inj",
+      "options": [
+        "command-inj",
+        "code-inj",
+        "path-traversal",
+        "ssrf",
+        "sqli",
+        "insecure-deser"
+      ]
+    },
+    "why": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "`escapeshellcmd` does not quote spaces, so a crafted Sender injects extra sendmail options (e.g. `-X` to write a file), which can drop a PHP webshell"
+        },
+        {
+          "label": "sendmail is slow, so a flood of messages backs up the queue",
+          "whyWrong": "Throughput is unrelated; the flaw is argument injection into the sendmail command."
+        },
+        {
+          "label": "The From address can be spoofed, enabling phishing emails",
+          "whyWrong": "Spoofing is a lesser concern than injecting sendmail arguments that write files."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Remove semicolons from $sender",
+          "diff": "+        $sender = str_replace(';', '', $sender);",
+          "whyWrong": "The attack uses spaces and option tokens like `-X`/`-O`, not semicolons."
+        },
+        {
+          "label": "Validate $sender is a well-formed email address (no spaces or option-like tokens) and refuse it otherwise",
+          "diff": "-        $params = sprintf('-oi -f%s', escapeshellcmd($sender));\n+        if (!PHPMailer::validateAddress($sender)) {\n+            throw new Exception('Invalid sender address');\n+        }\n+        $params = sprintf('-oi -f%s', escapeshellarg($sender));"
+        },
+        {
+          "label": "Base64-encode $sender before using it",
+          "diff": "+        $sender = base64_encode($sender);",
+          "whyWrong": "sendmail won't accept an encoded address and this doesn't stop a crafted plaintext address from being used elsewhere."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "cve",
+    "cve": "CVE-2016-10033",
+    "project": "PHPMailer",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2016-10033",
+    "license": "LGPL-2.1-only",
+    "attribution": "PHPMailer, CVE-2016-10033, simplified"
+  },
+  "training": {
+    "exploit": "Set the From address so the derived Sender is like `\"attacker\\\" -oQueueDirectory=/tmp -X/var/www/html/x.php foo@evil.com\"`. `escapeshellcmd` leaves the spaces intact, so sendmail parses `-X/var/www/html/x.php` and writes a log file — containing the attacker-chosen email body with PHP code — to the web root, giving a webshell and remote code execution.",
+    "concepts": [
+      "CWE-88",
+      "CVE-2016-10033"
+    ],
+    "hints": {
+      "line": "The flaw is how the sender is escaped before reaching sendmail.",
+      "bugClass": "Extra arguments are injected into a command.",
+      "why": "Does escapeshellcmd stop a value from becoming additional CLI options?",
+      "fix": "Reject anything that isn't a clean email address."
+    }
+  },
+  "writeup": {
+    "summary": "PHP's `mail()` passes its 5th argument onto sendmail's command line. `escapeshellcmd` neutralizes shell metacharacters but does not quote spaces, so a Sender crafted with spaces and sendmail options (`-O`, `-X`) becomes extra command-line arguments. `-X` makes sendmail write a log file — including attacker-controlled message content — to a web-accessible path, producing a PHP webshell and remote code execution. The fix validates that the sender is a well-formed address before use (and quotes it), rejecting values that carry option tokens.",
+    "readNext": [
+      {
+        "label": "CVE-2016-10033 (NVD)",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2016-10033"
+      },
+      {
+        "label": "Legal Hackers advisory (PHPMailer RCE)",
+        "url": "https://legalhackers.com/advisories/PHPMailer-Exploit-Remote-Code-Exec-CVE-2016-10033-Vuln.html"
+      }
+    ]
+  }
+}

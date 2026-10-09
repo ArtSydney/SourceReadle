@@ -1,0 +1,106 @@
+{
+  "id": "srd-0039",
+  "date": "2026-10-22",
+  "difficulty": "hard",
+  "language": "java",
+  "estimatedMinutes": 30,
+  "snippet": {
+    "files": [
+      {
+        "name": "TokenEndpoint.java",
+        "code": "import java.io.*;\n\n// Rebuild a session token the client posted back to us.\npublic Object handle(InputStream body) throws Exception {\n    ObjectInputStream ois = new ObjectInputStream(body);\n    Object token = ois.readObject();   // reconstructs whatever the stream names\n    return process(token);\n}",
+        "notes": {
+          "4": "Handles a request whose body is a serialized Java object.",
+          "5": "Wraps the request body in an ObjectInputStream.",
+          "6": "Reconstructs an object graph from the bytes — instantiating whatever classes the stream specifies.",
+          "7": "Passes the result on for processing."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "TokenEndpoint.java",
+      "line": 6,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "insecure-deser",
+      "options": [
+        "insecure-deser",
+        "code-inj",
+        "xxe",
+        "sqli",
+        "ssrf",
+        "idor"
+      ]
+    },
+    "why": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "`readObject` reconstructs arbitrary serializable classes and runs their callbacks (readObject/readResolve/finalize), so a crafted stream drives a gadget chain of classes on the classpath to execute code"
+        },
+        {
+          "label": "`readObject` blocks until the whole body arrives, enabling a slow-read DoS",
+          "whyWrong": "A DoS is minor next to the remote code execution this allows."
+        },
+        {
+          "label": "Casting `token` to a concrete type later may throw ClassCastException",
+          "whyWrong": "By the time any cast runs, the gadget has already executed during readObject."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Wrap readObject in try/catch and return null on error",
+          "diff": "+    try {\n     Object token = ois.readObject();\n+    } catch (Exception e) { return null; }",
+          "whyWrong": "The gadget executes during readObject; catching the exception afterward doesn't prevent it."
+        },
+        {
+          "label": "Don't deserialize untrusted input — use a data format (e.g. JSON) or enforce a strict class allowlist via ObjectInputFilter",
+          "diff": "-    ObjectInputStream ois = new ObjectInputStream(body);\n-    Object token = ois.readObject();\n+    Token token = jsonMapper.readValue(body, Token.class); // data-only; no arbitrary classes"
+        },
+        {
+          "label": "Run the handler under a restricted OS user",
+          "diff": "# deploy as an unprivileged user",
+          "whyWrong": "Dropping privileges limits blast radius but still allows code execution as that user; the deserialization sink is unchanged."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original (Java ObjectInputStream deserialization; ysoserial / FoxGlove 2015 research)"
+  },
+  "training": {
+    "exploit": "If a library with a known gadget chain (e.g. Apache Commons Collections) is on the classpath, generate a payload with a tool like ysoserial and POST it as the request body. When `readObject` deserializes it, the chain's callbacks run and execute an attacker command — unauthenticated remote code execution, no valid token required.",
+    "concepts": [
+      "CWE-502",
+      "OWASP A08:2021"
+    ],
+    "hints": {
+      "line": "The sink turns posted bytes into live Java objects.",
+      "bugClass": "Untrusted bytes become arbitrary objects.",
+      "why": "What runs while Java reconstructs a serialized object graph?",
+      "fix": "Don't native-deserialize untrusted input; use data-only parsing."
+    }
+  },
+  "writeup": {
+    "summary": "`ObjectInputStream.readObject` reconstructs whatever classes the byte stream names and invokes their serialization callbacks, so an attacker who can POST bytes drives a 'gadget chain' of classes already on the classpath (famously Apache Commons Collections) to execute code — before any application logic runs. The robust fix is to not native-deserialize untrusted input at all: use a data-only format like JSON, or, if Java serialization is unavoidable, install a strict `ObjectInputFilter` allowlist. Try/catch and privilege-dropping don't stop the gadget from firing.",
+    "readNext": [
+      {
+        "label": "OWASP Deserialization Cheat Sheet (Java)",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html#java"
+      },
+      {
+        "label": "Java ObjectInputFilter (JEP 290)",
+        "url": "https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/ObjectInputFilter.html"
+      }
+    ]
+  }
+}

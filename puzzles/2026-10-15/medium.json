@@ -1,0 +1,107 @@
+{
+  "id": "srd-0017",
+  "date": "2026-10-15",
+  "difficulty": "medium",
+  "language": "java",
+  "estimatedMinutes": 15,
+  "snippet": {
+    "files": [
+      {
+        "name": "FileController.java",
+        "code": "import java.nio.file.*;\n\n@GetMapping(\"/files\")\npublic ResponseEntity<byte[]> get(@RequestParam String name) throws IOException {\n    Path base = Paths.get(\"/var/data/files\");\n    Path target = base.resolve(name);\n    byte[] body = Files.readAllBytes(target);\n    return ResponseEntity.ok(body);\n}",
+        "notes": {
+          "4": "Handler taking a `name` request parameter — attacker-controlled.",
+          "5": "The directory files are supposed to come from.",
+          "6": "Resolves `name` against the base directory to form the target path.",
+          "7": "Reads the entire file at that path.",
+          "8": "Returns its bytes to the client."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "FileController.java",
+      "line": 6,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "path-traversal",
+      "options": [
+        "path-traversal",
+        "zip-slip",
+        "idor",
+        "ssrf",
+        "xxe",
+        "missing-authz"
+      ]
+    },
+    "why": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "`base.resolve(name)` with `../` segments — or an absolute `name`, which replaces the base entirely — produces a path outside `base`, which is then read"
+        },
+        {
+          "label": "`readAllBytes` loads the whole file into memory, risking exhaustion",
+          "whyWrong": "A large-file DoS is a different concern; the flaw is reading a file outside the intended directory."
+        },
+        {
+          "label": "`@RequestParam` without `required=false` throws when absent",
+          "whyWrong": "Parameter presence is unrelated to the traversal."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Reject name if it contains '..'",
+          "diff": "+    if (name.contains(\"..\")) throw new AccessDeniedException(name);\n     Path target = base.resolve(name);",
+          "whyWrong": "Misses absolute paths and encoded forms; blocklisting is fragile."
+        },
+        {
+          "label": "Normalize the resolved path and confirm it stays under base",
+          "diff": "-    Path target = base.resolve(name);\n+    Path target = base.resolve(name).normalize();\n+    if (!target.startsWith(base)) throw new AccessDeniedException(name);"
+        },
+        {
+          "label": "Catch IOException and return 404",
+          "diff": "+    try {\n     byte[] body = Files.readAllBytes(target);\n+    } catch (IOException e) { return ResponseEntity.notFound().build(); }",
+          "whyWrong": "Error handling doesn't confine the path; an existing file outside base is still served."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Request `?name=../../../../etc/passwd` to climb out of `/var/data/files`, or `?name=/etc/passwd` — Java's `resolve` of an absolute path discards the base. Either reads an arbitrary file.",
+    "concepts": [
+      "CWE-22",
+      "OWASP A01:2021"
+    ],
+    "hints": {
+      "line": "Where does user input join a filesystem path?",
+      "bugClass": "Input steers which path is read.",
+      "why": "What does resolve() do with `..` or an absolute path?",
+      "fix": "Normalize and verify the result is still under base."
+    }
+  },
+  "writeup": {
+    "summary": "`base.resolve(name)` trusts `name`: `../` segments climb out of the base directory, and an absolute `name` makes `resolve` return that absolute path outright, discarding the base. `readAllBytes` then returns any file the process can read. The fix normalizes the resolved path and checks `startsWith(base)` before reading, so anything that escapes is rejected.",
+    "readNext": [
+      {
+        "label": "Java Path.resolve / normalize",
+        "url": "https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Path.html"
+      },
+      {
+        "label": "OWASP Path Traversal",
+        "url": "https://owasp.org/www-community/attacks/Path_Traversal"
+      }
+    ]
+  }
+}

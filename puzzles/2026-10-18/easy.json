@@ -1,0 +1,105 @@
+{
+  "id": "srd-0025",
+  "date": "2026-10-18",
+  "difficulty": "easy",
+  "language": "php",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "page.php",
+        "code": "<?php\n// Render a page from the templates directory.\n$page = $_GET[\"page\"];\ninclude \"/var/www/templates/\" . $page . \".php\";",
+        "notes": {
+          "3": "Reads the `page` query parameter — attacker-controlled.",
+          "4": "Builds a file path from it and includes that file (which PHP also executes)."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "page.php",
+      "line": 4,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "path-traversal",
+      "options": [
+        "path-traversal",
+        "code-inj",
+        "command-inj",
+        "idor",
+        "zip-slip"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "`include` is slower than `require_once` for repeated loads",
+          "whyWrong": "Performance is irrelevant; the path being attacker-controlled is the issue."
+        },
+        {
+          "label": "`$page` is attacker-controlled in the include path, so `../` reaches files outside the templates directory — and `include` executes whatever it loads as PHP"
+        },
+        {
+          "label": "The `.php` suffix is appended redundantly",
+          "whyWrong": "The suffix is a minor constraint, not the vulnerability."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Remove '..' from $page",
+          "diff": "+$page = str_replace('..', '', $page);\n include \"/var/www/templates/\" . $page . \".php\";",
+          "whyWrong": "`....//` collapses back to `../`, and encoded/absolute forms slip through."
+        },
+        {
+          "label": "Map $page against a fixed allowlist of known page names",
+          "diff": "-$page = $_GET[\"page\"];\n-include \"/var/www/templates/\" . $page . \".php\";\n+$pages = ['home' => 'home.php', 'about' => 'about.php'];\n+$file = $pages[$_GET[\"page\"]] ?? 'home.php';\n+include \"/var/www/templates/\" . $file;"
+        },
+        {
+          "label": "URL-decode $page before building the path",
+          "diff": "+$page = urldecode($_GET[\"page\"]);",
+          "whyWrong": "Decoding doesn't confine the path and can normalize an attacker's traversal sequences for them."
+        },
+        {
+          "label": "Check the file exists before including it",
+          "diff": "+if (file_exists(\"/var/www/templates/\" . $page . \".php\"))\n include \"/var/www/templates/\" . $page . \".php\";",
+          "whyWrong": "Existence doesn't confine location; a traversal target that exists is still included."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "`?page=../../../../etc/passwd%00` (older PHP) reads arbitrary files. Worse, because `include` executes PHP, pointing it at an uploaded or log file containing PHP — or using a `php://filter`/wrapper — turns local file inclusion into remote code execution.",
+    "concepts": [
+      "CWE-98",
+      "CWE-22",
+      "OWASP A03:2021"
+    ],
+    "hints": {
+      "line": "Where does user input become part of a file path?",
+      "bugClass": "Input selects which file is loaded.",
+      "why": "Where can `../` take the include, and what does include do with it?",
+      "fix": "Choose the file from a fixed allowlist, not from the input."
+    }
+  },
+  "writeup": {
+    "summary": "`$page` is concatenated into an `include` path, so `../` sequences escape the templates directory (local file inclusion), and because `include` executes PHP, an attacker who can plant PHP anywhere readable — an upload, a log — gains code execution. The robust fix maps the requested page name through a fixed allowlist to a known file, so user input never forms the path. Stripping `..` or checking existence doesn't confine where the include points.",
+    "readNext": [
+      {
+        "label": "OWASP: Testing for Local File Inclusion",
+        "url": "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/11.1-Testing_for_Local_File_Inclusion"
+      }
+    ]
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "id": "srd-0019",
+  "date": "2026-10-16",
+  "difficulty": "easy",
+  "language": "javascript",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "redirect.js",
+        "code": "const express = require(\"express\");\nconst app = express();\n\n// After login, send the user back where they came from.\napp.get(\"/go\", (req, res) => {\n  const next = req.query.next;\n  res.redirect(next);\n});\n\napp.listen(3000);",
+        "notes": {
+          "5": "Route that bounces the user onward after login.",
+          "6": "Reads the `next` query parameter — attacker-controlled.",
+          "7": "Issues an HTTP redirect to whatever `next` contains."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "redirect.js",
+      "line": 7,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "open-redirect",
+      "options": [
+        "open-redirect",
+        "ssrf",
+        "path-traversal",
+        "code-inj",
+        "idor"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "A 302 redirect isn't cached, so the client makes an extra request",
+          "whyWrong": "Caching behavior is irrelevant to the security issue."
+        },
+        {
+          "label": "`next` is attacker-controlled and used directly as the redirect target, so a link to this trusted site can bounce victims to an attacker's site (phishing)"
+        },
+        {
+          "label": "`req.query.next` may be an array, causing a type error",
+          "whyWrong": "A type edge case is a robustness nit, not the redirect abuse."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Block values starting with 'http://' or 'https://'",
+          "diff": "+  if (/^https?:\\/\\//i.test(next)) return res.sendStatus(400);\n   res.redirect(next);",
+          "whyWrong": "Protocol-relative `//evil.com` and backslash tricks like `/\\evil.com` bypass this and still redirect off-site."
+        },
+        {
+          "label": "Allow only a site-relative path (a single leading slash, not '//')",
+          "diff": "-  res.redirect(next);\n+  if (!/^\\/[^/\\\\]/.test(next)) return res.sendStatus(400);\n+  res.redirect(next);"
+        },
+        {
+          "label": "encodeURIComponent(next) before redirecting",
+          "diff": "-  res.redirect(next);\n+  res.redirect(encodeURIComponent(next));",
+          "whyWrong": "That corrupts a legitimate path and still can't confirm the destination is your site."
+        },
+        {
+          "label": "Check that next contains your domain name",
+          "diff": "+  if (!next.includes(\"mysite.com\")) return res.sendStatus(400);",
+          "whyWrong": "`https://evil.com/?x=mysite.com` contains it; substring checks are trivially bypassed."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Send a victim `https://trusted-site/go?next=https://evil.example/login` — a link on the real domain that silently lands them on a look-alike login page to harvest credentials. `next=//evil.example` works too via protocol-relative URLs.",
+    "concepts": [
+      "CWE-601",
+      "OWASP A01:2021"
+    ],
+    "hints": {
+      "line": "Where does user input become the place the browser is sent?",
+      "bugClass": "The destination of a redirect is user-chosen.",
+      "why": "Who benefits from a link on your domain that lands elsewhere?",
+      "fix": "Permit only destinations within your own site."
+    }
+  },
+  "writeup": {
+    "summary": "`res.redirect(next)` sends the browser wherever `next` says. Because the link lives on the trusted domain, attackers use it in phishing: victims trust the first URL and get bounced to a credential-stealing clone. Safe handling allows only site-relative paths (a single leading `/`, not `//`), or an explicit allowlist of destinations. Blocklisting `http://` misses protocol-relative and backslash forms.",
+    "readNext": [
+      {
+        "label": "OWASP Unvalidated Redirects and Forwards",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"
+      }
+    ]
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "id": "srd-0014",
+  "date": "2026-10-14",
+  "difficulty": "medium",
+  "language": "python",
+  "estimatedMinutes": 15,
+  "snippet": {
+    "files": [
+      {
+        "name": "cache.py",
+        "code": "import pickle\nimport base64\nfrom flask import request\n\ndef load_state():\n    # Restore the view state the client sent back.\n    blob = request.cookies.get(\"state\")\n    raw = base64.b64decode(blob)\n    return pickle.loads(raw)",
+        "notes": {
+          "7": "Reads the `state` cookie from the request — attacker-controlled.",
+          "8": "Base64-decodes it into raw bytes.",
+          "9": "Reconstructs a Python object from those bytes with pickle."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "cache.py",
+      "line": 9,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "insecure-deser",
+      "options": [
+        "insecure-deser",
+        "code-inj",
+        "xxe",
+        "sqli",
+        "idor",
+        "ssrf"
+      ]
+    },
+    "why": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "`pickle.loads` invokes the object's `__reduce__` during unpickling, so a crafted cookie runs arbitrary code as it is loaded"
+        },
+        {
+          "label": "Base64 decoding can raise on malformed input, crashing the handler",
+          "whyWrong": "A decode error is a trivial robustness issue, not the code-execution primitive."
+        },
+        {
+          "label": "Cookies can be read by JavaScript, exposing the state",
+          "whyWrong": "Cookie confidentiality is unrelated to the server executing the payload."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Wrap pickle.loads in try/except and return {} on error",
+          "diff": "-    return pickle.loads(raw)\n+    try: return pickle.loads(raw)\n+    except Exception: return {}",
+          "whyWrong": "`__reduce__` executes during unpickling and can finish without raising; catching errors doesn't prevent the code from running."
+        },
+        {
+          "label": "Deserialize with json.loads instead of pickle",
+          "diff": "-    raw = base64.b64decode(blob)\n-    return pickle.loads(raw)\n+    import json\n+    return json.loads(base64.b64decode(blob))"
+        },
+        {
+          "label": "Check that the result is a dict after loading",
+          "diff": "-    return pickle.loads(raw)\n+    obj = pickle.loads(raw)\n+    assert isinstance(obj, dict)\n+    return obj",
+          "whyWrong": "The type check runs after unpickling, by which point the payload has already executed."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Build a payload object whose `__reduce__` returns `(os.system, (\"id\",))`, pickle it, base64-encode it, and send it as the `state` cookie. When `pickle.loads` runs, it calls `os.system(\"id\")` — remote code execution from an unauthenticated cookie.",
+    "concepts": [
+      "CWE-502",
+      "OWASP A08:2021"
+    ],
+    "hints": {
+      "line": "The sink turns attacker bytes back into a live object.",
+      "bugClass": "Untrusted bytes become executable objects.",
+      "why": "What does pickle call while rebuilding an object?",
+      "fix": "Use a data-only format like JSON for untrusted input."
+    }
+  },
+  "writeup": {
+    "summary": "`pickle.loads` reconstructs arbitrary Python objects and calls their `__reduce__` hooks during unpickling, so untrusted pickle data is effectively code. A crafted `state` cookie runs any command as it is loaded — before any later validation. Use `json.loads` (or another data-only format) for client-supplied data; pickle should only ever touch data you produced and protected.",
+    "readNext": [
+      {
+        "label": "Python pickle — security warning",
+        "url": "https://docs.python.org/3/library/pickle.html#module-pickle"
+      },
+      {
+        "label": "OWASP Deserialization Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html"
+      }
+    ]
+  }
+}

@@ -1,0 +1,204 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sourcereadle/schema/puzzle.schema.json",
+  "title": "SourceReadle Puzzle",
+  "description": "One daily puzzle: a code snippet with exactly one vulnerability, solved in three stages (find the line, name the bug class, pick the correct fix).",
+  "type": "object",
+  "required": ["id", "date", "difficulty", "language", "snippet", "stages", "source", "writeup"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Stable unique id, e.g. 'srd-0142'.",
+      "pattern": "^srd-[0-9]{4,}$"
+    },
+    "date": {
+      "type": "string",
+      "description": "Release date (UTC) in YYYY-MM-DD.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": ["easy", "medium", "hard"]
+    },
+    "language": {
+      "type": "string",
+      "enum": ["python", "csharp", "c", "cpp", "javascript", "go", "java", "ruby", "php", "rust"]
+    },
+    "estimatedMinutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60
+    },
+    "snippet": {
+      "type": "object",
+      "description": "The code the player reads. One or more files; lines are 1-indexed per file.",
+      "required": ["files"],
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["name", "code"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "code": { "type": "string", "description": "Verbatim source, newline-separated. Rendered with 1-indexed line numbers." },
+              "notes": {
+                "type": "object",
+                "description": "Explain-mode annotations: map of 1-indexed line number (as a string) to a plain-English description of what that line does. Sparse is fine — annotate the non-obvious lines. Neutral descriptions; do not give away which line is the vulnerability.",
+                "propertyNames": { "pattern": "^[0-9]+$" },
+                "additionalProperties": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "stages": {
+      "type": "object",
+      "required": ["line", "bugClass", "why", "fix"],
+      "additionalProperties": false,
+      "properties": {
+        "line": {
+          "type": "object",
+          "description": "Stage 1: locate the vulnerable line. Guesses are (file, line). Feedback is green/yellow/grey.",
+          "required": ["file", "line", "maxGuesses"],
+          "additionalProperties": false,
+          "properties": {
+            "file": { "type": "string", "description": "Name of the file in snippet.files that holds the bug." },
+            "line": { "type": "integer", "minimum": 1, "description": "1-indexed vulnerable line within that file." },
+            "yellowRadius": { "type": "integer", "minimum": 0, "default": 3, "description": "A guess within this many lines of the answer (same file) is yellow." },
+            "maxGuesses": { "type": "integer", "minimum": 1, "maximum": 10, "default": 5 }
+          }
+        },
+        "bugClass": {
+          "type": "object",
+          "description": "Stage 2: name the vulnerability class. Options drawn from the shared taxonomy. Yellow = right family, wrong specific class.",
+          "required": ["answer", "options"],
+          "additionalProperties": false,
+          "properties": {
+            "answer": { "type": "string", "description": "Must be one of options and a key in taxonomy.json." },
+            "options": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 8,
+              "items": { "type": "string" },
+              "uniqueItems": true
+            }
+          }
+        },
+        "why": {
+          "type": "object",
+          "description": "Stage 3 (training): understand the mechanism. Pick the explanation of WHY the line is exploitable. Exactly one correct.",
+          "required": ["answerIndex", "options"],
+          "additionalProperties": false,
+          "properties": {
+            "prompt": { "type": "string", "description": "Optional override for the question text." },
+            "answerIndex": { "type": "integer", "minimum": 0 },
+            "options": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 4,
+              "items": {
+                "type": "object",
+                "required": ["label"],
+                "additionalProperties": false,
+                "properties": {
+                  "label": { "type": "string", "description": "A candidate explanation of the mechanism." },
+                  "whyWrong": { "type": "string", "description": "Shown after answering, for incorrect options. Omit on the correct one." }
+                }
+              }
+            }
+          }
+        },
+        "fix": {
+          "type": "object",
+          "description": "Stage 4: pick the patch that actually closes the hole. Exactly one correct.",
+          "required": ["answerIndex", "options"],
+          "additionalProperties": false,
+          "properties": {
+            "answerIndex": { "type": "integer", "minimum": 0 },
+            "options": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 4,
+              "items": {
+                "type": "object",
+                "required": ["label", "diff"],
+                "additionalProperties": false,
+                "properties": {
+                  "label": { "type": "string" },
+                  "diff": { "type": "string", "description": "Unified-diff-style snippet of the proposed fix." },
+                  "whyWrong": { "type": "string", "description": "Shown after solving for the incorrect options. Omit on the correct one." }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "description": "Provenance. Required for every puzzle so attribution and licensing travel with it.",
+      "required": ["origin"],
+      "additionalProperties": false,
+      "properties": {
+        "origin": { "type": "string", "enum": ["original", "cve"], "description": "'original' = written by us; 'cve' = derived from a real advisory." },
+        "cve": { "type": "string", "pattern": "^CVE-[0-9]{4}-[0-9]+$" },
+        "project": { "type": "string" },
+        "fixCommit": { "type": "string", "description": "URL of the upstream fix commit." },
+        "advisory": { "type": "string", "description": "URL of the CVE/advisory." },
+        "license": { "type": "string", "description": "SPDX id of the source project's license, e.g. 'GPL-2.0-only'." },
+        "attribution": { "type": "string" }
+      }
+    },
+    "training": {
+      "type": "object",
+      "description": "Teaching material. 'exploit' and 'concepts' enrich the result screen; 'hints' power Learn mode.",
+      "additionalProperties": false,
+      "properties": {
+        "exploit": { "type": "string", "description": "Markdown: a concrete malicious input and what it yields. Explanatory, not a weaponized tool." },
+        "concepts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Tags such as 'CWE-89', 'OWASP A03:2021' for filtering and linking."
+        },
+        "hints": {
+          "type": "object",
+          "description": "One short hint per stage, revealed on demand in Learn mode.",
+          "additionalProperties": false,
+          "properties": {
+            "line": { "type": "string" },
+            "bugClass": { "type": "string" },
+            "why": { "type": "string" },
+            "fix": { "type": "string" }
+          }
+        }
+      }
+    },
+    "writeup": {
+      "type": "object",
+      "description": "Released the day AFTER the puzzle. Explains why the line is dangerous and points at real code to read next.",
+      "required": ["summary"],
+      "additionalProperties": false,
+      "properties": {
+        "summary": { "type": "string", "description": "Markdown. Why it's exploitable and how the fix closes it." },
+        "readNext": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["label", "url"],
+            "additionalProperties": false,
+            "properties": {
+              "label": { "type": "string" },
+              "url": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

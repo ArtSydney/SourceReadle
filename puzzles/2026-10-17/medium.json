@@ -1,0 +1,108 @@
+{
+  "id": "srd-0023",
+  "date": "2026-10-17",
+  "difficulty": "medium",
+  "language": "csharp",
+  "estimatedMinutes": 15,
+  "snippet": {
+    "files": [
+      {
+        "name": "WebhookService.cs",
+        "code": "using System.Net.Http;\nusing System.Threading.Tasks;\n\npublic class WebhookService\n{\n    private static readonly HttpClient Http = new HttpClient();\n\n    // Deliver an event to the customer's configured webhook URL.\n    public async Task<string> Deliver(string webhookUrl, string json)\n    {\n        var content = new StringContent(json);\n        var resp = await Http.PostAsync(webhookUrl, content);\n        return await resp.Content.ReadAsStringAsync();\n    }\n}",
+        "notes": {
+          "6": "A shared HttpClient instance (reuse is the recommended pattern).",
+          "9": "`webhookUrl` is configured by the customer — attacker-controlled.",
+          "11": "Wraps the event JSON as the request body.",
+          "12": "The server POSTs to that URL.",
+          "13": "Returns the response body to the caller."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "WebhookService.cs",
+      "line": 12,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "ssrf",
+      "options": [
+        "ssrf",
+        "open-redirect",
+        "idor",
+        "xxe",
+        "insecure-deser",
+        "missing-authz"
+      ]
+    },
+    "why": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "A static HttpClient leaks sockets and should be disposed per call",
+          "whyWrong": "Reusing HttpClient is actually correct; this isn't the security issue."
+        },
+        {
+          "label": "StringContent defaults to text/plain, which some servers reject",
+          "whyWrong": "A content-type nit has nothing to do with the vulnerability."
+        },
+        {
+          "label": "`webhookUrl` is user-configured and the request is made by the server, so it can reach internal-only endpoints; returning the body leaks their contents"
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Require the URL to use https",
+          "diff": "+        if (!webhookUrl.StartsWith(\"https://\")) throw new ArgumentException();",
+          "whyWrong": "`https://169.254.169.254` or an internal HTTPS service is still reachable; scheme isn't the control."
+        },
+        {
+          "label": "Allow only http/https, resolve the host, and reject private/loopback/link-local addresses (re-checking on redirects)",
+          "diff": "-        var resp = await Http.PostAsync(webhookUrl, content);\n+        await EnsurePublicDestination(webhookUrl); // resolves host, blocks RFC1918/loopback/link-local\n+        var resp = await noRedirectClient.PostAsync(webhookUrl, content);"
+        },
+        {
+          "label": "Add a request timeout",
+          "diff": "+        Http.Timeout = TimeSpan.FromSeconds(5);",
+          "whyWrong": "A timeout limits how long the request runs, not where it goes."
+        },
+        {
+          "label": "Reject URLs containing 'internal' or 'localhost'",
+          "diff": "+        if (webhookUrl.Contains(\"localhost\") || webhookUrl.Contains(\"internal\")) throw new ArgumentException();",
+          "whyWrong": "IP literals and other hostnames bypass the substring check."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "A customer sets their webhook URL to `http://169.254.169.254/latest/meta-data/iam/security-credentials/` (cloud metadata) or `http://127.0.0.1:8500/v1/kv/?recurse` (internal Consul). The server dutifully requests it and returns the response body — handing the attacker internal data or credentials.",
+    "concepts": [
+      "CWE-918",
+      "OWASP A10:2021"
+    ],
+    "hints": {
+      "line": "Where does the server fetch a URL it was handed?",
+      "bugClass": "The server reaches a destination the user chose.",
+      "why": "What internal hosts can the server reach that the customer can't?",
+      "fix": "Validate the resolved destination is a public address you intend."
+    }
+  },
+  "writeup": {
+    "summary": "`Deliver` POSTs to any URL the customer configured and returns the response, from the server's privileged network position — textbook SSRF. An attacker points the webhook at cloud metadata or internal services to exfiltrate credentials and data. The fix validates the scheme, resolves the host, and rejects private/loopback/link-local ranges (re-checking after any redirect), rather than blocklisting hostnames or relying on https.",
+    "readNext": [
+      {
+        "label": "OWASP SSRF Prevention Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html"
+      }
+    ]
+  }
+}

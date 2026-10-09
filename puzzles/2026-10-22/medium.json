@@ -1,0 +1,112 @@
+{
+  "id": "srd-0038",
+  "date": "2026-10-22",
+  "difficulty": "medium",
+  "language": "csharp",
+  "estimatedMinutes": 15,
+  "snippet": {
+    "files": [
+      {
+        "name": "AdminController.cs",
+        "code": "[ApiController]\n[Route(\"api/admin\")]\npublic class AdminController : ControllerBase\n{\n    private readonly IUserStore _users;\n\n    [HttpPost(\"users/{id}/delete\")]\n    public IActionResult DeleteUser(int id)\n    {\n        _users.Delete(id);\n        return Ok();\n    }\n}",
+        "notes": {
+          "2": "All actions live under /api/admin.",
+          "7": "Maps POST /api/admin/users/{id}/delete to this action.",
+          "8": "The action handler — note there is no authorization attribute on it or the controller.",
+          "10": "Deletes the user with the given id.",
+          "11": "Returns success."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "AdminController.cs",
+      "line": 8,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "missing-authz",
+      "options": [
+        "missing-authz",
+        "idor",
+        "auth-bypass",
+        "ssrf",
+        "sqli",
+        "open-redirect"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "A very large `id` could overflow the int",
+          "whyWrong": "Integer range isn't the issue; the lack of an access check is."
+        },
+        {
+          "label": "The action deletes any user but carries no authentication or authorization check, so any caller — not just admins — can invoke it"
+        },
+        {
+          "label": "Returning `Ok()` reveals that the user existed",
+          "whyWrong": "An information nuance is trivial next to anyone being able to delete accounts."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Rename the route to something non-guessable",
+          "diff": "-    [Route(\"api/admin\")]\n+    [Route(\"api/x7f2\")]",
+          "whyWrong": "Security by obscurity; once the route is discovered it's still wide open."
+        },
+        {
+          "label": "Require an admin role on the controller/action",
+          "diff": " [ApiController]\n [Route(\"api/admin\")]\n+[Authorize(Roles = \"Admin\")]\n public class AdminController : ControllerBase"
+        },
+        {
+          "label": "Validate that id is positive",
+          "diff": "+        if (id <= 0) return BadRequest();",
+          "whyWrong": "Input validation doesn't control who is allowed to delete users."
+        },
+        {
+          "label": "Return 404 instead of 200 after deleting",
+          "diff": "-        return Ok();\n+        return NotFound();",
+          "whyWrong": "Changing the response status adds no access check."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Send `POST /api/admin/users/1/delete` with no token or a non-admin token. With no `[Authorize]` on the controller or action, ASP.NET runs it for anyone who can reach the URL, deleting arbitrary accounts (a function-level access-control failure).",
+    "concepts": [
+      "CWE-862",
+      "OWASP A01:2021"
+    ],
+    "hints": {
+      "line": "What's missing above the privileged action?",
+      "bugClass": "A sensitive action with no permission gate.",
+      "why": "Who is allowed to call this endpoint as written?",
+      "fix": "Require the appropriate role to reach it."
+    }
+  },
+  "writeup": {
+    "summary": "`DeleteUser` performs a privileged operation but neither the controller nor the action has any `[Authorize]` attribute, so it runs for any caller — a missing function-level authorization check. The fix applies `[Authorize(Roles = \"Admin\")]` (ideally at the controller) so only administrators can invoke it. Obscure routes, id validation, and response-code changes do not restrict who may act.",
+    "readNext": [
+      {
+        "label": "ASP.NET Core authorization",
+        "url": "https://learn.microsoft.com/en-us/aspnet/core/security/authorization/introduction"
+      },
+      {
+        "label": "OWASP A01:2021 Broken Access Control",
+        "url": "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+      }
+    ]
+  }
+}

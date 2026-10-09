@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SourceReadle</title>
+  <meta name="description" content="A daily code-reading puzzle: find the vulnerability, name its class, pick the fix." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">&lt;/&gt;</span>
+      <h1>SourceReadle</h1>
+    </div>
+    <div class="streak" id="streak" title="Current / max streak">🔥 0</div>
+  </header>
+
+  <nav class="controls">
+    <div class="datenav">
+      <button id="prevDay" aria-label="Previous day">‹</button>
+      <span id="dateLabel">—</span>
+      <button id="nextDay" aria-label="Next day">›</button>
+    </div>
+    <div class="difftabs" id="difftabs" role="tablist">
+      <button data-diff="easy" role="tab">Easy</button>
+      <button data-diff="medium" role="tab">Medium</button>
+      <button data-diff="hard" role="tab">Hard</button>
+    </div>
+    <div class="modes">
+      <button id="explainBtn" class="toggle" aria-pressed="false" title="Tap any line to see what it does">🔍 Explain</button>
+      <button id="learnBtn" class="toggle" aria-pressed="false" title="Unlimited guesses + hints, no streak">🎓 Learn</button>
+    </div>
+  </nav>
+
+  <main id="main">
+    <section class="meta" id="meta"></section>
+
+    <section class="code" id="codePanel" aria-label="Source code"></section>
+
+    <section class="note hidden" id="notePanel" aria-live="polite"></section>
+
+    <section class="stage" id="stagePanel"></section>
+
+    <section class="result hidden" id="resultPanel"></section>
+  </main>
+
+  <footer class="foot">
+    <span>Read code. Find the bug. Learn the fix.</span>
+    <a id="reportLink" href="#" target="_blank" rel="noopener">Report this puzzle 👎</a>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "sourcereadle",
+  "version": "0.1.0",
+  "description": "A daily code-reading puzzle: find the vulnerability, name its class, pick the fix.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "validate": "node scripts/validate.mjs",
+    "build": "node scripts/build-site.mjs",
+    "backlog": "node scripts/backlog-check.mjs",
+    "generate": "node scripts/generate-backlog.mjs",
+    "generate:fake": "SRD_FAKE=1 SRD_BUFFER=3 node scripts/generate-backlog.mjs",
+    "serve": "node scripts/serve.mjs",
+    "test": "npm run validate"
+  },
+  "license": "MIT"
+}

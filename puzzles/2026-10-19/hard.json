@@ -1,0 +1,105 @@
+{
+  "id": "srd-0030",
+  "date": "2026-10-19",
+  "difficulty": "hard",
+  "language": "c",
+  "estimatedMinutes": 30,
+  "snippet": {
+    "files": [
+      {
+        "name": "session.c",
+        "code": "/* Handle a request: look up the session, refresh it, build a reply. */\nstruct session *sess = find_session(id);\nif (sess == NULL)\n    return -1;\n\nif (sess->expired) {\n    free_session(sess);          /* frees sess and unlinks it from the table */\n}\n\n/* Refresh last-seen time and build the response. */\nsess->last_seen = now();\nsnprintf(out, len, \"welcome %s\", sess->user);\nreturn 0;",
+        "notes": {
+          "2": "Looks up the session object for this request id.",
+          "3": "Guards against a missing session.",
+          "6": "If the session has expired...",
+          "7": "...it is freed and removed from the session table.",
+          "11": "Writes to the session struct.",
+          "12": "Reads the username out of the session struct.",
+          "13": "Returns success."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "session.c",
+      "line": 11,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "use-after-free",
+      "options": [
+        "use-after-free",
+        "null-deref",
+        "buffer-overflow",
+        "oob-read",
+        "int-overflow",
+        "toctou",
+        "format-string"
+      ]
+    },
+    "why": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "`find_session` can return NULL and is dereferenced",
+          "whyWrong": "Lines 3-4 already handle NULL; the problem is use of a freed pointer, not a null one."
+        },
+        {
+          "label": "When the session is expired it is freed on line 7, but lines 11-12 still dereference `sess`, reading and writing memory that has been returned to the allocator"
+        },
+        {
+          "label": "`snprintf` may truncate a long username",
+          "whyWrong": "Truncation is benign; it is not the memory-safety defect."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Set sess = NULL after free_session(sess)",
+          "diff": "     free_session(sess);\n+    sess = NULL;",
+          "whyWrong": "Lines 11-12 would then dereference NULL and crash; the code still uses an invalid pointer instead of avoiding the use."
+        },
+        {
+          "label": "After freeing an expired session, return immediately instead of continuing to use it",
+          "diff": "     if (sess->expired) {\n         free_session(sess);\n+        return -1;   /* session gone; do not touch it */\n     }"
+        },
+        {
+          "label": "Replace free_session(sess) with free(sess)",
+          "diff": "-    free_session(sess);\n+    free(sess);",
+          "whyWrong": "This still frees the object and leaves the later dereferences dangling (and skips unlinking it from the table)."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original (use-after-free pattern)"
+  },
+  "training": {
+    "exploit": "Request an expired session so line 7 frees `sess`. The allocator may hand that chunk to another concurrent allocation before line 11 runs, so writing `sess->last_seen` corrupts the new object and reading `sess->user` dereferences attacker-influenced data. With heap grooming this turns into controlled memory corruption — crashes at minimum, code execution at worst.",
+    "concepts": [
+      "CWE-416"
+    ],
+    "hints": {
+      "line": "The object is touched after it was released.",
+      "bugClass": "Freed memory is used again.",
+      "why": "What state is `sess` in on line 11 when the session was expired?",
+      "fix": "Stop using the object once it's been freed."
+    }
+  },
+  "writeup": {
+    "summary": "On the expired branch, `free_session(sess)` releases the object and unlinks it, but control falls through to lines 11-12, which write and read `sess` — a use-after-free. Between the free and the use, the allocator can reissue that memory to another allocation, so the write corrupts an unrelated object and the read returns attacker-influenceable bytes; careful heap grooming escalates this to code execution. The fix returns immediately after freeing (or only refreshes sessions that weren't freed), so the freed pointer is never dereferenced.",
+    "readNext": [
+      {
+        "label": "CWE-416: Use After Free",
+        "url": "https://cwe.mitre.org/data/definitions/416.html"
+      }
+    ]
+  }
+}

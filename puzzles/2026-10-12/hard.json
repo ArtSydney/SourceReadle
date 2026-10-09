@@ -1,0 +1,121 @@
+{
+  "id": "srd-0009",
+  "date": "2026-10-12",
+  "difficulty": "hard",
+  "language": "c",
+  "estimatedMinutes": 30,
+  "snippet": {
+    "files": [
+      {
+        "name": "nss_hostname.c",
+        "code": "/* Simplified from glibc __nss_hostname_digits_dots(), pre-patch. */\nint __nss_hostname_digits_dots(const char *name, struct hostent *resbuf,\n                               char *buffer, size_t buflen,\n                               struct hostent **result, int *h_errnop)\n{\n    char *addr_list;\n    char *aliases;\n    size_t size_needed;\n\n    /* Lay out in the caller's buffer: the address, the h_addr_list\n     * pointer array (NULL-terminated), then a copy of `name`. */\n    size_needed = (sizeof(*addr_list) + sizeof(char *))\n                + strlen(name) + 1;\n\n    if (buflen < size_needed)\n    {\n        *h_errnop = NETDB_INTERNAL;\n        return ERANGE;\n    }\n\n    addr_list = buffer;\n    aliases   = buffer + sizeof(*addr_list);\n    strcpy(buffer + (sizeof(*addr_list) + sizeof(char *)), name);\n\n    *result = resbuf;\n    return 0;\n}\n",
+        "notes": {
+          "2": "Entry point used when resolving a host given as a numeric/dotted string.",
+          "3": "`buffer`/`buflen` is scratch space the caller provides for the function to write into.",
+          "12": "Computes how many bytes it will need in `buffer` for the address, the pointer array, and a copy of `name`.",
+          "13": "Adds the length of `name` plus one for the NUL terminator.",
+          "15": "Bails out with ERANGE if the caller's buffer is smaller than that estimate.",
+          "21": "Points `addr_list` at the start of the buffer.",
+          "22": "Points `aliases` just past the address.",
+          "23": "Copies `name` into the buffer at an offset — this is the write that can run past the end.",
+          "25": "Hands the result back to the caller."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "nss_hostname.c",
+      "line": 12,
+      "yellowRadius": 2,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "buffer-overflow",
+      "options": [
+        "buffer-overflow",
+        "int-overflow",
+        "oob-read",
+        "use-after-free",
+        "null-deref",
+        "format-string",
+        "sign-confusion"
+      ]
+    },
+    "why": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "`size_needed` under-counts what will actually be written (it omits alignment and the full pointer array), so the buffer check passes for buffers that are too small and the `strcpy` runs off the end"
+        },
+        {
+          "label": "`strcpy` is inherently unsafe and must never be used in C",
+          "whyWrong": "`strcpy` into a correctly sized buffer is fine; the defect is that the size check guarding it is wrong, not the copy primitive."
+        },
+        {
+          "label": "`*result` is left unset on the error path, causing the caller to dereference a stale pointer",
+          "whyWrong": "The error path returns ERANGE and the caller handles it; that's not where memory is corrupted."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "Use strncpy bounded by buflen",
+          "diff": "-    strcpy(buffer + (sizeof(*addr_list) + sizeof(char *)), name);\n+    strncpy(buffer + (sizeof(*addr_list) + sizeof(char *)), name, buflen);",
+          "whyWrong": "strncpy with buflen ignores the bytes already consumed by the address and pointer array, can still write past the buffer, and leaves the copy unterminated. The real defect is the under-counted size check, not the copy function."
+        },
+        {
+          "label": "Reject names longer than 255 bytes",
+          "diff": "+    if (strlen(name) > 255)\n+        return ERANGE;\n     size_needed = ...",
+          "whyWrong": "A fixed cap doesn't match the actual layout the function writes; a shorter name can still overflow a small caller buffer, and a valid long name is rejected. The size check must reflect what is written."
+        },
+        {
+          "label": "Count every region the layout writes, including alignment, in size_needed",
+          "diff": "-    size_needed = (sizeof(*addr_list) + sizeof(char *))\n-                + strlen(name) + 1;\n+    size_t align = __alignof__(char *);\n+    size_needed = ((strlen(name) + 1 + align - 1) & ~(align - 1))\n+                + sizeof(char *)        /* h_addr_list[0] */\n+                + sizeof(char *);       /* NULL terminator of the array */"
+        },
+        {
+          "label": "Zero the buffer before writing",
+          "diff": "+    memset(buffer, 0, buflen);\n     addr_list = buffer;",
+          "whyWrong": "Zeroing does not change how many bytes strcpy writes. If size_needed under-counts, the strcpy still runs off the end of the buffer."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "cve",
+    "cve": "CVE-2015-0235",
+    "project": "GNU C Library (glibc)",
+    "fixCommit": "https://sourceware.org/git/?p=glibc.git;a=commit;h=d5dd6189d506068ed11c8bfa1e1e9bffde04decd",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2015-0235",
+    "license": "LGPL-2.1-or-later",
+    "attribution": "GNU C Library, CVE-2015-0235 (GHOST)"
+  },
+  "training": {
+    "exploit": "Reach this via `gethostbyname` with a crafted all-digits-and-dots hostname whose length is chosen so `size_needed` passes the check but the real layout needs a few more bytes (the omitted alignment + pointer-array space). The `strcpy` then overflows the caller's buffer by those bytes, corrupting adjacent heap metadata — which on affected systems (e.g. the Exim mail server) was turned into remote code execution.",
+    "concepts": [
+      "CWE-787",
+      "CVE-2015-0235"
+    ],
+    "hints": {
+      "line": "The overflow is a copy; the root cause is the arithmetic a few lines above it.",
+      "bugClass": "Memory is written past the end of a buffer.",
+      "why": "Does `size_needed` really account for everything written after line 21?",
+      "fix": "Make the size the check uses match every byte the layout writes."
+    }
+  },
+  "writeup": {
+    "summary": "`size_needed` is meant to cover everything the function writes into the caller's `buffer`, but it under-counts: it omits the alignment padding and the full size of the NULL-terminated pointer array. The `if (buflen < size_needed)` guard therefore passes for buffers that are actually too small, and the following `strcpy` writes `name` past the end of `buffer` — a heap (or stack) buffer overflow driven by a long hostname fed through `gethostbyname`. Because resolver paths are reachable from many network-facing services, GHOST was remotely triggerable. The correct fix recomputes `size_needed` to account for every region written, including alignment, so the length check is accurate. Bounding the copy or capping the name treats symptoms; the root cause is the wrong size in the check.",
+    "readNext": [
+      {
+        "label": "Qualys advisory: GHOST (CVE-2015-0235)",
+        "url": "https://www.qualys.com/2015/01/27/cve-2015-0235/GHOST-CVE-2015-0235.txt"
+      },
+      {
+        "label": "glibc fix commit d5dd6189",
+        "url": "https://sourceware.org/git/?p=glibc.git;a=commit;h=d5dd6189d506068ed11c8bfa1e1e9bffde04decd"
+      }
+    ]
+  }
+}

