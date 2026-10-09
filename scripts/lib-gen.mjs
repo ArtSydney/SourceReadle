@@ -16,9 +16,16 @@ const GUIDE = {
   hard: { lang: "c, cpp or java", mins: 30, origin: "code simplified from a real, well-known CVE you are confident about" },
 };
 
-export function buildPrompt(diff, idNum, date) {
+export function buildPrompt(diff, idNum, date, avoid = {}) {
   const g = GUIDE[diff];
+  const av = [];
+  if (avoid.classes?.length) av.push(`- Do NOT use these bug classes (already used elsewhere today): ${avoid.classes.join(", ")}.`);
+  if (avoid.langs?.length) av.push(`- Do NOT use these languages (already used elsewhere today): ${avoid.langs.join(", ")}.`);
+  if (avoid.recentClasses?.length) av.push(`- Prefer a class NOT in this recent set: ${avoid.recentClasses.join(", ")}.`);
+  if (avoid.cves?.length) av.push(`- Do NOT base the puzzle on any of these already-used CVEs: ${avoid.cves.join(", ")}.`);
+  const avoidBlock = av.length ? `\nVariety constraints:\n${av.join("\n")}\n` : "";
   return `You are drafting ONE SourceReadle puzzle. Output ONLY a single JSON object, no prose, no markdown fences.
+${avoidBlock}
 
 It MUST conform to this JSON Schema:
 ${schema}
@@ -68,7 +75,7 @@ function scrubDeep(x) {
 }
 
 // Returns a puzzle object (id/date/difficulty are forced regardless of model output).
-export async function draftOne({ diff, idNum, date, key, model, fake, catalog }) {
+export async function draftOne({ diff, idNum, date, key, model, fake, catalog, avoid }) {
   let obj;
   if (fake) {
     // Clone a same-difficulty catalog entry; valid by construction. Testing only.
@@ -79,7 +86,7 @@ export async function draftOne({ diff, idNum, date, key, model, fake, catalog })
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model, max_tokens: diff === "hard" ? 32000 : 12000, messages: [{ role: "user", content: buildPrompt(diff, idNum, date) }] }),
+      body: JSON.stringify({ model, max_tokens: diff === "hard" ? 32000 : 12000, messages: [{ role: "user", content: buildPrompt(diff, idNum, date, avoid) }] }),
     });
     if (!res.ok) throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data = await res.json();

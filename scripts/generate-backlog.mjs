@@ -45,24 +45,33 @@ for (const date of dates) for (const diff of DIFFS) {
   const m = /srd-(\d+)/.exec(o.id || ""); if (m) maxId = Math.max(maxId, +m[1]);
 }
 
+// CVEs already used anywhere in the catalog — never reproduce one.
+const allCves = new Set();
+for (const diff of DIFFS) for (const o of catalog[diff]) if (o.source?.cve) allCves.add(o.source.cve);
+const recentClasses = (diff) => catalog[diff].slice(-6).map((o) => o.stages?.bugClass?.answer).filter(Boolean);
+
 let created = 0, skipped = 0, nextId = maxId;
 for (let i = 1; i <= buffer; i++) {
   const date = addDays(today, i);
+  const usedClass = [], usedLang = [];              // keep the day's 3 puzzles varied
   for (const diff of DIFFS) {
     const target = join(puzzlesSrc, date, `${diff}.json`);
     if (existsSync(target)) continue;                 // respect authored/already-filled
 
+    const avoid = { classes: [...usedClass], langs: [...usedLang], cves: [...allCves], recentClasses: recentClasses(diff) };
     let ok = false;
     for (let attempt = 1; attempt <= 2 && !ok; attempt++) {
       const idNum = nextId + 1;
       try {
-        const obj = await draftOne({ diff, idNum, date, key, model, fake, catalog });
+        const obj = await draftOne({ diff, idNum, date, key, model, fake, catalog, avoid });
         const { errors } = validatePuzzle(obj, { date, diff, seenIds: new Set(seenIds) });
         if (errors.length) { console.error(`  ${date}/${diff} attempt ${attempt} invalid: ${errors[0]}`); continue; }
         mkdirSync(dirname(target), { recursive: true });
         writeFileSync(target, JSON.stringify(obj, null, 2) + "\n");
         seenIds.add(obj.id); catalog[diff].push(obj); nextId = idNum; created++; ok = true;
-        console.log(`  + ${date}/${diff} -> ${obj.id} (${obj.language})`);
+        usedClass.push(obj.stages?.bugClass?.answer); usedLang.push(obj.language);
+        if (obj.source?.cve) allCves.add(obj.source.cve);
+        console.log(`  + ${date}/${diff} -> ${obj.id} (${obj.language}, ${obj.stages?.bugClass?.answer})`);
       } catch (e) {
         console.error(`  ${date}/${diff} attempt ${attempt} failed: ${e.message}`);
       }
