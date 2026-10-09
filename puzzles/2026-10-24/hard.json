@@ -1,0 +1,126 @@
+{
+  "id": "srd-0048",
+  "date": "2026-10-24",
+  "difficulty": "hard",
+  "language": "c",
+  "estimatedMinutes": 30,
+  "snippet": {
+    "files": [
+      {
+        "name": "pkexec.c",
+        "code": "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <glib.h>\nint main (int argc, char *argv[])\n{\n  char *path;\n  char *s;\n  guint n;\n  gboolean opt_user = FALSE;\n  /* parse options; stop at the first non-option argument */\n  for (n = 1; n < (guint) argc; n++)\n    {\n      if (strcmp (argv[n], \"--version\") == 0)\n        {\n          printf (\"pkexec version 0.105\\n\");\n          exit (0);\n        }\n      else if (strcmp (argv[n], \"--user\") == 0)\n        opt_user = TRUE;\n      else\n        break;\n    }\n  path = g_strdup (argv[n]);\n  if (path[0] != '/')\n    {\n      s = g_find_program_in_path (path);\n      if (s == NULL)\n        exit (127);\n      argv[n] = path = s;\n    }\n  return run_as_root (path, opt_user);\n}",
+        "notes": {
+          "5": "Setuid-root program entry point; argc/argv come from whoever launched the process.",
+          "9": "n is an unsigned index into argv.",
+          "11": "Options are consumed until the first argument that is not a known flag.",
+          "12": "Loop starts at index 1, skipping argv[0], and runs while n < argc.",
+          "24": "Copies the first non-option argument, which names the program to run.",
+          "25": "Relative program names are resolved via PATH.",
+          "27": "Searches the directories in PATH for the program.",
+          "30": "Stores the resolved absolute path back into the argv array.",
+          "32": "Runs the chosen program with elevated privileges."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "pkexec.c",
+      "line": 24,
+      "yellowRadius": 3,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "oob-read",
+      "options": [
+        "oob-read",
+        "buffer-overflow",
+        "null-deref",
+        "int-overflow",
+        "sign-confusion",
+        "path-traversal"
+      ]
+    },
+    "why": {
+      "options": [
+        {
+          "label": "If the caller starts the program with argc == 0, the loop never runs and n stays 1, so argv[n] reads past the end of argv into the environment block, and that attacker-controlled value is used as the program path.",
+          "whyWrong": null
+        },
+        {
+          "label": "g_strdup copies a string longer than the destination buffer and overwrites adjacent stack memory.",
+          "whyWrong": "g_strdup allocates a buffer of the right size, so there is no fixed-size copy to overflow. The problem is which pointer is read, not how much is copied."
+        },
+        {
+          "label": "The unsigned n is compared with a signed argc, so a negative argc makes the loop run billions of times.",
+          "whyWrong": "The cast does make a negative argc huge, but the operating system never passes a negative argc. The real trigger is argc == 0, where the loop never executes."
+        },
+        {
+          "label": "argv[n] is NULL when no argument is given, and g_strdup(NULL) dereferences it and crashes.",
+          "whyWrong": "With argc == 0 the slot after argv[0] is not NULL. It is the first environment pointer, and g_strdup(NULL) is safe anyway. The danger is reading attacker data, not a crash."
+        }
+      ],
+      "answerIndex": 0
+    },
+    "fix": {
+      "options": [
+        {
+          "label": "Reject a NULL argv[n] after the loop",
+          "diff": "   path = g_strdup (argv[n]);\n+  if (argv[n] == NULL)\n+    exit (127);\n   if (path[0] != '/')",
+          "whyWrong": "With argc == 0, argv[1] is envp[0], which is non-NULL whenever any environment variable is set. The out-of-bounds read still happens and the check passes."
+        },
+        {
+          "label": "Strip dangerous environment variables after the path is resolved",
+          "diff": "       argv[n] = path = s;\n     }\n+  g_unsetenv (\"GCONV_PATH\");\n+  g_unsetenv (\"LD_PRELOAD\");\n   return run_as_root (path, opt_user);",
+          "whyWrong": "This blocks one known exploit and leaves the out-of-bounds read and the write through argv[n] in place. The attacker still controls the value used as path."
+        },
+        {
+          "label": "Refuse to run when argc is less than 1",
+          "diff": "+  if (argc < 1)\n+    {\n+      fprintf (stderr, \"No program name given\\n\");\n+      return 1;\n+    }\n   for (n = 1; n < (guint) argc; n++)"
+        },
+        {
+          "label": "Reject an empty path before resolving it",
+          "diff": "   path = g_strdup (argv[n]);\n+  if (path[0] == '\\0')\n+    exit (127);\n   if (path[0] != '/')",
+          "whyWrong": "The out-of-bounds read has already happened. The attacker's environment string is non-empty, so it passes this check."
+        }
+      ],
+      "answerIndex": 2
+    }
+  },
+  "source": {
+    "origin": "cve",
+    "cve": "CVE-2021-4034",
+    "project": "polkit (pkexec)",
+    "advisory": "https://nvd.nist.gov/vuln/detail/CVE-2021-4034",
+    "license": "LGPL-2.1-or-later",
+    "attribution": "Based on polkit pkexec.c, CVE-2021-4034 (PwnKit), simplified"
+  },
+  "training": {
+    "exploit": "The attacker launches the setuid pkexec through execve() with an empty argv array (argc = 0) and a crafted environment. argv[1] then aliases envp[0], so pkexec takes an environment string such as \"pwnkit.so:.\" as the program name. It resolves that name through PATH and writes the result back into argv[1], which overwrites envp[0]. That lets the attacker bring back an unsafe variable like GCONV_PATH that setuid programs normally have stripped. A malicious shared object then gets loaded in the privileged process, giving local root.",
+    "concepts": [
+      "CWE-125",
+      "CWE-787",
+      "Setuid privilege escalation",
+      "argc/argv/envp memory layout"
+    ],
+    "hints": {
+      "line": "Ask what n is if the loop body never executes, and what argv[n] points at then.",
+      "bugClass": "The program reads memory just past the end of an array it assumed was non-empty.",
+      "why": "argc is supplied by the caller. Think about what sits in memory right after the argv pointers.",
+      "fix": "Validate the assumption the code relies on, at the point where it enters the program, rather than patching a downstream symptom."
+    }
+  },
+  "writeup": {
+    "summary": "pkexec assumed argc is at least 1, because shells always pass the program name as argv[0]. An attacker can call execve() with an empty argv, so the option loop never runs and argv[1] is really the first environment pointer. The code reads that as the program to run and then writes the resolved path back into the same slot, which lets the attacker reintroduce environment variables that setuid programs are supposed to discard. The fix adds an argc check at the start of main(). Never trust process-start invariants in privileged code, because the caller controls them.",
+    "readNext": [
+      {
+        "label": "Qualys advisory: PwnKit local privilege escalation in polkit's pkexec",
+        "url": "https://www.qualys.com/2022/01/25/cve-2021-4034/pwnkit.txt"
+      },
+      {
+        "label": "NVD entry for CVE-2021-4034",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-4034"
+      }
+    ]
+  }
+}

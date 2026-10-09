@@ -1,0 +1,123 @@
+{
+  "id": "srd-0047",
+  "date": "2026-10-24",
+  "difficulty": "medium",
+  "language": "java",
+  "estimatedMinutes": 15,
+  "snippet": {
+    "files": [
+      {
+        "name": "ProductSearchDao.java",
+        "code": "package com.example.inventory;\n\nimport java.sql.*;\nimport java.util.*;\n\npublic class ProductSearchDao {\n    private static final Set<String> DIRECTIONS = Set.of(\"ASC\", \"DESC\");\n    private final Connection conn;\n\n    public ProductSearchDao(Connection conn) {\n        this.conn = conn;\n    }\n\n    public List<String> search(String category, String sortBy, String dir, int limit)\n            throws SQLException {\n        String direction = DIRECTIONS.contains(dir.toUpperCase()) ? dir.toUpperCase() : \"ASC\";\n        int safeLimit = Math.min(Math.max(limit, 1), 100);\n        String sql = \"SELECT name FROM products WHERE category = ? AND active = 1\"\n                + \" ORDER BY \" + sortBy + \" \" + direction\n                + \" LIMIT \" + safeLimit;\n        List<String> names = new ArrayList<>();\n        try (PreparedStatement ps = conn.prepareStatement(sql)) {\n            ps.setString(1, category);\n            try (ResultSet rs = ps.executeQuery()) {\n                while (rs.next()) {\n                    names.add(rs.getString(\"name\"));\n                }\n            }\n        }\n        return names;\n    }\n}",
+        "notes": {
+          "7": "Set of the two permitted sort directions.",
+          "14": "Parameters come straight from the HTTP query string via a controller.",
+          "16": "Direction is upper-cased and falls back to ASC if not in the set.",
+          "17": "Clamps the requested row limit to the range 1..100.",
+          "18": "Start of the SQL text; the category is a bound placeholder.",
+          "19": "Appends the sort column and direction to the query.",
+          "20": "Appends the already-clamped integer limit.",
+          "22": "Compiles the assembled SQL as a prepared statement.",
+          "23": "Binds the category value to the first placeholder."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "ProductSearchDao.java",
+      "line": 19,
+      "yellowRadius": 3,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "sqli",
+      "options": [
+        "sqli",
+        "command-inj",
+        "code-inj",
+        "idor",
+        "log-inj",
+        "path-traversal"
+      ]
+    },
+    "why": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "The limit value is concatenated into the SQL, so an attacker can supply a negative number to dump the whole table.",
+          "whyWrong": "The limit is clamped to 1..100 and is an int, so it cannot carry SQL text."
+        },
+        {
+          "label": "The category parameter is bound with setString, which fails to stop injection for string columns.",
+          "whyWrong": "Bound parameters are the correct defense; category is not interpolated into the SQL."
+        },
+        {
+          "label": "The sortBy string is concatenated into the SQL unvalidated. A prepared statement cannot protect it, so attacker-controlled SQL expressions become part of the ORDER BY clause.",
+          "whyWrong": "This is the mechanism: the column name is never bound or checked against an allowlist."
+        },
+        {
+          "label": "The direction check uses toUpperCase(), which is locale-sensitive and lets crafted keywords bypass the allowlist.",
+          "whyWrong": "Locale quirks do not matter here; any value outside the set falls back to the literal \"ASC\"."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Bind sortBy as a placeholder: ORDER BY ? and ps.setString(2, sortBy).",
+          "diff": "-                + \" ORDER BY \" + sortBy + \" \" + direction\n+                + \" ORDER BY ? \" + direction\n...\n             ps.setString(1, category);\n+            ps.setString(2, sortBy);",
+          "whyWrong": "Placeholders bind values, not identifiers. The database would sort by a constant string, so sorting breaks and the design is wrong."
+        },
+        {
+          "label": "Map sortBy through a fixed allowlist of column names and use the mapped constant, defaulting to name.",
+          "diff": "+        Map<String, String> cols = Map.of(\"name\", \"name\", \"price\", \"price\");\n+        String col = cols.getOrDefault(sortBy, \"name\");\n-                + \" ORDER BY \" + sortBy + \" \" + direction\n+                + \" ORDER BY \" + col + \" \" + direction"
+        },
+        {
+          "label": "Strip semicolons, quotes and comment markers from sortBy before concatenating it.",
+          "diff": "+        sortBy = sortBy.replaceAll(\"[;'\\\"]|--\", \"\");\n         String sql = \"SELECT name FROM products WHERE category = ? AND active = 1\"\n                 + \" ORDER BY \" + sortBy + \" \" + direction",
+          "whyWrong": "Blacklisting is bypassable. A subquery inside CASE WHEN needs none of those characters, so blind injection still works."
+        },
+        {
+          "label": "Reject sortBy values longer than 30 characters.",
+          "diff": "+        if (sortBy.length() > 30) {\n+            sortBy = \"name\";\n+        }\n         String sql = \"SELECT name FROM products WHERE category = ? AND active = 1\"",
+          "whyWrong": "A length cap does not restrict content. Short payloads such as (SELECT 1/0) or IF(...) still inject."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "The attacker requests /products?category=tools&sortBy=(CASE WHEN (SELECT SUBSTR(password,1,1) FROM users WHERE username='admin')='a' THEN name ELSE price END). If the first character matches, results come back sorted by name; otherwise by price. By watching the row order, the attacker extracts data one character per request (boolean-based blind SQL injection), even though the WHERE clause is parameterized.",
+    "concepts": [
+      "CWE-89",
+      "OWASP A03:2021",
+      "ORDER BY injection",
+      "allowlisting identifiers"
+    ],
+    "hints": {
+      "line": "Which part of the query is built by string concatenation rather than bound with a placeholder?",
+      "bugClass": "Untrusted text becomes part of a database query's structure.",
+      "why": "Think about what a PreparedStatement can and cannot bind.",
+      "fix": "Identifiers cannot be parameters, so you must choose from values you control."
+    }
+  },
+  "writeup": {
+    "summary": "The category filter uses a bound parameter and the limit is clamped to an int, but the sort column is concatenated directly into the query. Prepared statements only protect values, not identifiers or clauses, so a caller can inject arbitrary SQL expressions into ORDER BY. Even without UNION, CASE and subqueries give a blind data-extraction oracle through result ordering. The fix is to map the user's choice to a fixed set of known column names and never pass user text into the clause. Blacklist filters and length caps are bypassable, and a placeholder cannot stand in for a column name.",
+    "readNext": [
+      {
+        "label": "OWASP SQL Injection Prevention Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"
+      },
+      {
+        "label": "CWE-89: SQL Injection",
+        "url": "https://cwe.mitre.org/data/definitions/89.html"
+      }
+    ]
+  }
+}

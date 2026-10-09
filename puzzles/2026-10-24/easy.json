@@ -1,0 +1,124 @@
+{
+  "id": "srd-0046",
+  "date": "2026-10-24",
+  "difficulty": "easy",
+  "language": "python",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "themes.py",
+        "code": "import os\nimport zipfile\n\nTHEME_ROOT = \"/srv/app/themes\"\n\n\ndef install_theme(zip_path, theme_id):\n    \"\"\"Unpack an uploaded theme archive into its own folder.\"\"\"\n    dest = os.path.join(THEME_ROOT, str(int(theme_id)))\n    os.makedirs(dest, exist_ok=True)\n    with zipfile.ZipFile(zip_path) as zf:\n        for info in zf.infolist():\n            if info.is_dir():\n                continue\n            target = os.path.join(dest, info.filename)\n            os.makedirs(os.path.dirname(target), exist_ok=True)\n            with open(target, \"wb\") as out:\n                out.write(zf.read(info))\n    return dest",
+        "notes": {
+          "4": "Base directory under which all themes are stored.",
+          "9": "Builds a per-theme folder from a numeric id; the id is forced to an integer first.",
+          "10": "Creates the destination folder if it does not exist.",
+          "11": "Opens the user-uploaded archive for reading.",
+          "12": "Iterates over every entry (member) listed in the archive.",
+          "13": "Directory entries are skipped; only files are extracted.",
+          "15": "Computes where this archive entry will be written on disk.",
+          "16": "Ensures the parent directory of the target exists.",
+          "17": "Opens the target file for binary writing.",
+          "18": "Reads the member's decompressed bytes and writes them out."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "themes.py",
+      "line": 15,
+      "yellowRadius": 3,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "zip-slip",
+      "options": [
+        "zip-slip",
+        "path-traversal",
+        "command-inj",
+        "toctou",
+        "insecure-deser",
+        "buffer-overflow"
+      ]
+    },
+    "why": {
+      "answerIndex": 2,
+      "options": [
+        {
+          "label": "zip.read() decompresses the entire member into memory, so a tiny archive can exhaust RAM and crash the server.",
+          "whyWrong": "Decompression bombs are a real concern, but they are a denial-of-service issue and not what makes this line exploitable for file writes."
+        },
+        {
+          "label": "The theme_id is converted with int(), which can raise an exception and leave a half-extracted folder.",
+          "whyWrong": "int() actually sanitises the id and keeps the destination folder safe; a failure there writes nothing."
+        },
+        {
+          "label": "info.filename comes from the attacker-controlled archive and is joined to dest without checking, so names like ../../x or absolute paths make the target land outside the theme folder.",
+          "whyWrong": null
+        },
+        {
+          "label": "os.makedirs with exist_ok=True lets an attacker race the directory creation and swap in a symlink.",
+          "whyWrong": "That race is not the core flaw here; even with no race at all, a ../ entry name escapes the destination."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 1,
+      "options": [
+        {
+          "label": "Strip \"../\" sequences from the entry name before joining.",
+          "diff": "-            target = os.path.join(dest, info.filename)\n+            name = info.filename.replace(\"../\", \"\")\n+            target = os.path.join(dest, name)",
+          "whyWrong": "Single-pass replacement is bypassable: \"....//\" collapses to \"../\" after the replace. Absolute paths also still pass through."
+        },
+        {
+          "label": "Resolve the final path and refuse anything that is not inside the destination folder.",
+          "diff": "-            target = os.path.join(dest, info.filename)\n+            root = os.path.realpath(dest)\n+            target = os.path.realpath(os.path.join(root, info.filename))\n+            if os.path.commonpath([target, root]) != root:\n+                raise ValueError(\"unsafe path in archive\")"
+        },
+        {
+          "label": "Only extract files whose names end in .css, .js or .html.",
+          "diff": "-            target = os.path.join(dest, info.filename)\n+            if not info.filename.endswith((\".css\", \".js\", \".html\")):\n+                continue\n+            target = os.path.join(dest, info.filename)",
+          "whyWrong": "An entry such as ../../static/app.js has an allowed extension but still escapes the folder and overwrites files elsewhere."
+        },
+        {
+          "label": "Reject entry names that start with a slash.",
+          "diff": "-            target = os.path.join(dest, info.filename)\n+            if info.filename.startswith(\"/\"):\n+                continue\n+            target = os.path.join(dest, info.filename)",
+          "whyWrong": "This only blocks absolute paths; relative names with ../ segments still climb out of dest."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle original"
+  },
+  "training": {
+    "exploit": "An attacker uploads a theme zip containing an entry named ../../../../srv/app/plugins/backdoor.py. The code joins that name onto the theme folder, so the file is written to the plugins directory instead, and when the app next loads plugins the attacker's code runs. Overwriting configuration or templates the same way is also possible.",
+    "concepts": [
+      "CWE-22",
+      "CWE-23",
+      "Zip Slip",
+      "OWASP A01:2021"
+    ],
+    "hints": {
+      "line": "Where does the path of each extracted file come from, and who controls it?",
+      "bugClass": "The danger is in the filenames stored inside an archive.",
+      "why": "Think about what os.path.join does with '../' segments or an absolute second argument.",
+      "fix": "Validate the resolved final path, not the raw string."
+    }
+  },
+  "writeup": {
+    "summary": "Archive entry names are attacker-controlled data, but this code treats them as safe relative paths. os.path.join does not normalise or contain '..' segments, and an absolute entry name replaces the base entirely, so a crafted entry can write anywhere the process has permission. This class is known as Zip Slip. The fix resolves the final path with realpath and verifies it is still inside the intended destination before writing. Blacklisting substrings or file extensions leaves bypasses.",
+    "readNext": [
+      {
+        "label": "Snyk Zip Slip vulnerability research",
+        "url": "https://security.snyk.io/research/zip-slip-vulnerability"
+      },
+      {
+        "label": "CWE-22: Path Traversal",
+        "url": "https://cwe.mitre.org/data/definitions/22.html"
+      }
+    ]
+  }
+}
