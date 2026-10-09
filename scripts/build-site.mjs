@@ -26,6 +26,10 @@ const out = join(root, "_site");
 const cutoff = process.env.SRD_DATE || new Date().toISOString().slice(0, 10);
 const rotate = process.env.SRD_ROTATE !== "0";
 const windowDays = parseInt(process.env.SRD_WINDOW || "365", 10);
+// Publish this many days past UTC "today" so players east of UTC (e.g. Sydney,
+// UTC+11) can get their LOCAL today. The player clamps forward nav to the
+// viewer's own local date, so nobody plays beyond their own day.
+const lead = parseInt(process.env.SRD_LEAD || "1", 10);
 const DIFFS = ["easy", "medium", "hard"];
 const DAY = 86400000;
 
@@ -76,13 +80,14 @@ const windowStart = (() => {
 })();
 
 // --- materialize one puzzle per day/difficulty --------------------------------
+const end = addDays(cutoff, lead);
 const dates = [];
-const byDate = {};
+const byDate = {};                                   // date -> { diff: language }
 let count = 0;
 
-for (let d = windowStart; d <= cutoff; d = addDays(d, 1)) {
+for (let d = windowStart; d <= end; d = addDays(d, 1)) {
   const dayIndex = daysBetween(START, d);          // stable across window changes
-  const present = [];
+  const langs = {};
   for (const diff of DIFFS) {
     let obj = authored[`${d}/${diff}`];
     if (!obj && rotate) {
@@ -94,15 +99,15 @@ for (let d = windowStart; d <= cutoff; d = addDays(d, 1)) {
     served.date = d;                                 // the date it plays on
     mkdirSync(join(out, "puzzles", d), { recursive: true });
     writeFileSync(join(out, "puzzles", d, `${diff}.json`), JSON.stringify(served, null, 2));
-    present.push(diff);
+    langs[diff] = served.language;
     count++;
   }
-  if (present.length) { dates.push(d); byDate[d] = present; }
+  if (Object.keys(langs).length) { dates.push(d); byDate[d] = langs; }
 }
 
 writeFileSync(join(out, "index.json"), JSON.stringify({
   generated: new Date().toISOString(),
-  cutoff, rotation: rotate, launch: START,
+  cutoff, lead, published: end, rotation: rotate, launch: START,
   dates, byDate, count,
 }, null, 2));
 

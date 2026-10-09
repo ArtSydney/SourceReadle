@@ -26,18 +26,20 @@ body {
   font-family: var(--sans); line-height: 1.45;
 }
 .topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--panel);
+  position: relative; display: flex; align-items: center; justify-content: center;
+  padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--panel);
 }
-.brand { display: flex; align-items: center; gap: 10px; }
-.logo { font-family: var(--mono); color: var(--accent); font-weight: 700; }
-.topbar h1 { font-size: 18px; margin: 0; letter-spacing: -0.3px; }
-.streak { font-variant-numeric: tabular-nums; font-size: 14px; color: var(--muted); }
+.brand { display: flex; align-items: center; gap: 9px; }
+.logo { font-family: var(--mono); color: var(--accent); font-weight: 700; font-size: 15px; }
+.topbar h1 { font-size: 20px; margin: 0; font-weight: 800; letter-spacing: 3px; text-transform: uppercase; }
+.streak { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); font-variant-numeric: tabular-nums; font-size: 14px; color: var(--muted); }
 
 .controls {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  flex-wrap: wrap; padding: 12px 16px; max-width: 900px; margin: 0 auto;
+  flex-wrap: wrap; padding: 16px 16px 8px; max-width: 760px; margin: 0 auto;
 }
+.lang { font: inherit; font-size: 13px; cursor: pointer; border: 1px solid var(--border); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 8px; }
+.todaytag { font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: middle; }
 .datenav { display: flex; align-items: center; gap: 8px; }
 .datenav button, .difftabs button {
   font: inherit; cursor: pointer; border: 1px solid var(--border);
@@ -51,9 +53,10 @@ body {
 .toggle { font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 10px; font-size: 13px; }
 .toggle[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-main { max-width: 900px; margin: 0 auto; padding: 0 16px 40px; }
-.meta { color: var(--muted); font-size: 13px; margin: 6px 0 12px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-.pill { border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
+main { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
+.meta { color: var(--muted); font-size: 12px; margin: 4px 0 14px; display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+.pill { border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; background: var(--panel); }
+.pill.cve { border-color: var(--accent); color: var(--accent); font-family: var(--mono); font-size: 11px; }
 
 .code {
   background: var(--codebg); color: var(--codeink); border-radius: 12px;

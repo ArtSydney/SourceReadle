@@ -6,7 +6,7 @@ let TAX = null;
 const puzzleCache = new Map();
 
 const STAGES = ["line", "bugClass", "why", "fix"]; // ordered; stage index 1..4, 5 = done
-const state = { date: null, diff: "easy", puzzle: null, prog: null, explain: false, selectedNote: null };
+const state = { date: null, diff: "easy", puzzle: null, prog: null, explain: false, selectedNote: null, lang: "" };
 
 const $ = (id) => document.getElementById(id);
 
@@ -69,11 +69,12 @@ function fileLines(f) { const a = f.code.split("\n"); if (a.length && a[a.length
 
 // ---- meta ------------------------------------------------------------------
 function renderMeta(p) {
+  // Keep it minimal: language + time, and credit the CVE/project when there is one.
   const src = p.source.origin === "cve"
-    ? `<span class="pill">${escapeHtml(p.source.cve)}</span><span class="pill">${escapeHtml(p.source.project || "")}</span>`
-    : `<span class="pill">original</span>`;
+    ? `<span class="pill cve">${escapeHtml(p.source.cve)}</span>` +
+      (p.source.project ? `<span class="pill">${escapeHtml(p.source.project)}</span>` : "")
+    : "";
   $("meta").innerHTML =
-    `<span class="pill">${p.id}</span><span class="pill">${p.difficulty}</span>` +
     `<span class="pill">${LANG_LABEL[p.language] || p.language}</span>` +
     `<span class="pill">~${p.estimatedMinutes || "?"} min</span>` + src;
   $("reportLink").href = `https://github.com/ArtSydney/SourceReadle/issues/new?title=${encodeURIComponent("Puzzle issue: " + p.id)}&body=${encodeURIComponent("Puzzle: " + p.id + "\n\nWhat's wrong:")}`;
@@ -299,7 +300,55 @@ function render() {
 
 function fmtDate(d) { return new Date(d + "T00:00:00Z").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }); }
 
+// ---- date clamping + language filter --------------------------------------
+const LANGKEY = "sourcereadle:lang:v1";
+function getLangPref() { try { return localStorage.getItem(LANGKEY) || ""; } catch { return ""; } }
+function setLangPref(v) { try { v ? localStorage.setItem(LANGKEY, v) : localStorage.removeItem(LANGKEY); } catch {} }
+
+function localToday() { const n = new Date(); const p = (x) => String(x).padStart(2, "0"); return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())}`; }
+// Latest published date not past the viewer's own local date — so nobody plays ahead.
+function maxPlayable() { const t = localToday(); const le = INDEX.dates.filter((d) => d <= t); return le.length ? le[le.length - 1] : INDEX.dates[0]; }
+// Dates the viewer may open, honoring the language filter for the current difficulty.
+function playableDates() {
+  const max = maxPlayable();
+  return INDEX.dates.filter((d) => d <= max && (!state.lang || (INDEX.byDate[d] && INDEX.byDate[d][state.diff] === state.lang)));
+}
+function resolveDate(prefer) {
+  const pd = playableDates();
+  if (!pd.length) return null;
+  const le = pd.filter((d) => d <= (prefer || pd[pd.length - 1]));
+  return le.length ? le[le.length - 1] : pd[0];
+}
+
+// Only offer languages that actually have a playable puzzle at the current
+// difficulty, so no dropdown choice leads to an empty screen.
+function populateLangs() {
+  const max = maxPlayable();
+  const langs = new Set();
+  for (const d of INDEX.dates) { if (d > max) continue; const m = INDEX.byDate[d]; if (m && m[state.diff]) langs.add(m[state.diff]); }
+  const list = [...langs].sort();
+  if (state.lang && !list.includes(state.lang)) state.lang = "";
+  $("langSelect").innerHTML = `<option value="">All languages</option>` +
+    list.map((l) => `<option value="${l}">${LANG_LABEL[l] || l}</option>`).join("");
+  $("langSelect").value = state.lang;
+}
+
 async function load() {
+  populateLangs();
+  const pd = playableDates();
+  if (!pd.includes(state.date)) state.date = pd.length ? pd[pd.length - 1] : null;
+
+  document.querySelectorAll("#difftabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.diff === state.diff ? "true" : "false"));
+
+  if (!state.date) {
+    $("meta").innerHTML = ""; $("stagePanel").innerHTML = ""; $("notePanel").classList.add("hidden"); $("resultPanel").classList.add("hidden");
+    $("dateLabel").textContent = "—";
+    $("codePanel").className = "code";
+    $("codePanel").innerHTML = `<div class="filename">No ${LANG_LABEL[state.lang] || state.lang} puzzles at this difficulty yet — try another language or difficulty.</div>`;
+    $("prevDay").disabled = $("nextDay").disabled = true;
+    return;
+  }
+
   const p = await getPuzzle(state.date, state.diff);
   state.puzzle = p; state.explain = false; state.selectedNote = null;
   if (p) {
@@ -307,17 +356,19 @@ async function load() {
     if (state.prog.learn === undefined) state.prog.learn = learnOn();
     if (state.prog.stage > 1) state.prog.puzzleAnswerClass = p.stages.bugClass.answer;
   }
-  $("dateLabel").textContent = fmtDate(state.date);
-  document.querySelectorAll("#difftabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.diff === state.diff ? "true" : "false"));
-  $("prevDay").disabled = INDEX.dates.indexOf(state.date) <= 0;
-  $("nextDay").disabled = INDEX.dates.indexOf(state.date) >= INDEX.dates.length - 1;
+  const isToday = state.date === localToday();
+  $("dateLabel").innerHTML = fmtDate(state.date) + (isToday ? ` <span class="todaytag">Today</span>` : "");
+  const i = pd.indexOf(state.date);
+  $("prevDay").disabled = i <= 0;
+  $("nextDay").disabled = i < 0 || i >= pd.length - 1;
   render();
 }
 
 function wire() {
   document.querySelectorAll("#difftabs button").forEach((b) => b.addEventListener("click", () => { state.diff = b.dataset.diff; load(); }));
-  $("prevDay").addEventListener("click", () => { const i = INDEX.dates.indexOf(state.date); if (i > 0) { state.date = INDEX.dates[i - 1]; load(); } });
-  $("nextDay").addEventListener("click", () => { const i = INDEX.dates.indexOf(state.date); if (i < INDEX.dates.length - 1) { state.date = INDEX.dates[i + 1]; load(); } });
+  $("prevDay").addEventListener("click", () => { const pd = playableDates(); const i = pd.indexOf(state.date); if (i > 0) { state.date = pd[i - 1]; load(); } });
+  $("nextDay").addEventListener("click", () => { const pd = playableDates(); const i = pd.indexOf(state.date); if (i >= 0 && i < pd.length - 1) { state.date = pd[i + 1]; load(); } });
+  $("langSelect").addEventListener("change", () => { state.lang = $("langSelect").value; setLangPref(state.lang); state.date = resolveDate(state.date); load(); });
   $("explainBtn").addEventListener("click", () => { state.explain = !state.explain; if (!state.explain) $("notePanel").classList.add("hidden"); render(); });
   $("learnBtn").addEventListener("click", () => {
     const now = !state.prog.learn; setLearn(now); state.prog.learn = now;
@@ -329,8 +380,10 @@ async function main() {
   INDEX = await loadJSON("index.json");
   const tax = await loadJSON("taxonomy.json");
   TAX = { classes: tax.classes, families: tax.families };
-  if (!INDEX.dates || INDEX.dates.length === 0) { $("codePanel").innerHTML = `<div class="filename">No puzzles published yet.</div>`; return; }
-  state.date = INDEX.dates[INDEX.dates.length - 1];
+  if (!INDEX.dates || INDEX.dates.length === 0) { $("codePanel").innerHTML = `<div class="filename">No puzzles published yet — check back on launch day.</div>`; return; }
+  state.lang = getLangPref();
+  state.date = resolveDate(maxPlayable());
+  if (!state.date) { state.lang = ""; setLangPref(""); state.date = resolveDate(maxPlayable()); }  // bad pref -> reset
   wire();
   await load();
 }
