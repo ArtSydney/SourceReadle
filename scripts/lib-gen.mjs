@@ -31,17 +31,17 @@ Requirements for THIS puzzle:
 - "difficulty": "${diff}"
 - "language": one of ${g.lang}
 - "estimatedMinutes": ~${g.mins}
-- snippet: ${g.origin}. Include a sparse "notes" map (line number -> plain-English description) for the non-obvious lines; keep notes neutral so they don't reveal the bug.
+- snippet: ${g.origin}. IMPORTANT: give each file's source as "code" = an ARRAY of line strings (one element per line, NO embedded newline characters, no trailing empty element). Include a sparse "notes" map (line-number string -> plain-English description) for the non-obvious lines; keep notes neutral so they don't reveal the bug.
 - Exactly one real vulnerability. stages.line points at it (1-indexed, within the file).
 - stages.bugClass: the correct key plus 3-7 distractors from the list; include at least one from the SAME family as the answer.
 - stages.why: 3-4 explanations of the mechanism, exactly one correct; wrong ones get a "whyWrong". The correct option has NO whyWrong.
-- stages.fix: 3-4 patch options with unified-diff "diff" strings, exactly one correct; wrong ones get "whyWrong". Don't make the correct one the longest or most "secure-sounding".
+- stages.fix: 3-4 patch options, exactly one correct; wrong ones get "whyWrong". Each option's "diff" MUST be an ARRAY of unified-diff line strings (each element starts with ' ', '+', or '-'; no embedded newlines). Don't make the correct one the longest or most "secure-sounding".
 - source: ${diff === "hard" ? 'origin "cve" with the real cve id, project, the NVD advisory URL (https://nvd.nist.gov/vuln/detail/<CVE>), an SPDX license, and attribution ending in ", simplified"' : 'origin "original", license "CC0-1.0", attribution "SourceReadle original"'}.
 - training.exploit: a concrete "what the attacker sends and what happens" paragraph (explanatory, not a weaponized tool). training.hints: one short nudge per stage.
 - writeup.summary: 3-6 sentences. writeup.readNext: 1-2 real reference links.
 - Pick a vulnerability class you have not already been asked about recently; vary languages and classes.
 
-Return only the JSON object.`;
+Output STRICTLY valid JSON. Because code and diffs are arrays of line strings, no string in your output should contain a raw newline. Return only the JSON object.`;
 }
 
 function stripFences(t) { return t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim(); }
@@ -77,12 +77,16 @@ export async function draftOne({ diff, idNum, date, key, model, fake, catalog })
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model, max_tokens: 4096, messages: [{ role: "user", content: buildPrompt(diff, idNum, date) }] }),
+      body: JSON.stringify({ model, max_tokens: 8192, messages: [{ role: "user", content: buildPrompt(diff, idNum, date) }] }),
     });
     if (!res.ok) throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data = await res.json();
     obj = JSON.parse(stripFences((data.content || []).map((b) => b.text || "").join("")));
   }
+  // The model returns code/diffs as arrays of lines (far more reliable JSON);
+  // join them into the newline strings the schema and player expect.
+  for (const f of obj?.snippet?.files || []) if (Array.isArray(f.code)) f.code = f.code.join("\n");
+  for (const o of obj?.stages?.fix?.options || []) if (Array.isArray(o.diff)) o.diff = o.diff.join("\n");
   obj = scrubDeep(obj);                              // defuse any secret-shaped strings
   obj.id = `srd-${String(idNum).padStart(4, "0")}`;
   obj.date = date;
