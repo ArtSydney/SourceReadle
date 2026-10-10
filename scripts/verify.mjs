@@ -69,12 +69,21 @@ function sh(cmd, dir, timeoutMs) {
   const r = spawnSync("/bin/sh", ["-c", cmd], { cwd: dir, timeout: timeoutMs, encoding: "utf8" });
   return { status: r.status, timedOut: r.error && r.error.code === "ETIMEDOUT", stderr: r.stderr || "" };
 }
+const UID = typeof process.getuid === "function" ? process.getuid() : null;
+const GID = typeof process.getgid === "function" ? process.getgid() : null;
 function dockerArgs(image, dir) {
-  return [
+  const a = [
     "run", "--rm", "--network=none", "--cap-drop=ALL", "--security-opt=no-new-privileges",
     "--memory=256m", "--memory-swap=256m", "--pids-limit=256", "--cpus=1",
-    "--read-only", "--tmpfs", "/tmp:exec", "-v", `${dir}:/work`, "-w", "/work", image,
+    "--read-only", "--tmpfs", "/tmp:exec",
+    // Run as the host user so files the PoC/compiler create under /work are owned
+    // by us (host cleanup works) and the container is non-root. HOME points at the
+    // writable tmpfs; skip .pyc so /work stays clean.
+    "-e", "HOME=/tmp", "-e", "PYTHONDONTWRITEBYTECODE=1",
   ];
+  if (UID != null) a.push("--user", `${UID}:${GID}`);
+  a.push("-v", `${dir}:/work`, "-w", "/work", image);
+  return a;
 }
 function dockerSh(image, cmd, dir, timeoutMs) {
   const r = spawnSync("docker", [...dockerArgs(image, dir), "sh", "-c", cmd], { timeout: timeoutMs + 20000, encoding: "utf8" });
@@ -112,7 +121,9 @@ function runVariant(v, runner, fileMap) {
     const got = r.timedOut ? "blocked" : (r.status === 0 ? "exploited" : "blocked");
     return { got, exitCode: r.status, timedOut: r.timedOut, stderr: r.stderr };
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    // A sandbox may leave files we can't delete from the host; don't let cleanup
+    // failure abort the run.
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 }
 
