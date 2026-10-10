@@ -156,3 +156,4 @@ Do **Phase 0** now (cheap, fixes the funnel). Then **Phase 1** (trust) because i
 - 2026-10-10 — T0.3 structured feedback shipped (👎 report modal → prefilled, labeled GitHub issue; assets bumped to ?v=7).
 - 2026-10-10 — T0.4 meaningful share grid shipped (Wordle-style journey grid + score/4; assets bumped to ?v=8).
 - 2026-10-10 — T0.5 accessibility & polish shipped (keyboard/ARIA/live region, roving tabs, focus ring, reduced-motion, colour-blind text cues) + emoji cleanup. Phase 0 complete. Assets bumped to ?v=9.
+- 2026-10-10 — UX fix: choice stages now reveal a clear verdict (right answer highlighted + plain-language banner) and wait for Continue instead of auto-advancing, so correct/wrong is obvious during play. Assets bumped to ?v=10.

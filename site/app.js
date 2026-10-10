@@ -168,6 +168,16 @@ function hintBtn(stageKey) {
   return `<details class="hint-d"${isScaffold() ? " open" : ""}><summary>Hint</summary><div>${mdLite(h)}</div></details>`;
 }
 
+function verdictBanner(result, headline, detail) {
+  const v = result === "green" ? "v-green" : result === "yellow" ? "v-yellow" : "v-grey";
+  return `<div class="verdict ${v}"><strong>${headline}</strong>${detail ? " " + detail : ""}</div>`;
+}
+const continueBar = (label) => `<div class="row"><button class="btn" id="stageNext">${label}</button></div>`;
+function wireContinue() {
+  const b = $("stageNext");
+  if (b) { b.addEventListener("click", advanceStage); b.focus(); }
+}
+
 function renderStage(p, prog) {
   const el = $("stagePanel");
   const scaf = isScaffold();
@@ -191,10 +201,20 @@ function renderStage(p, prog) {
     if (scaf) { const ai = classes.indexOf(p.stages.bugClass.answer); const [a, b] = twoPos(ai < 0 ? 0 : ai, seed); classes = [classes[a], classes[b]]; }
     const opts = classes.map((c) =>
       `<button class="opt${classStateClass(prog, c)}" data-class="${escapeHtml(c)}">${escapeHtml(TAX.classes[c]?.label || c)}</button>`).join("");
+    let tail = "";
+    if (prog.classResult) {
+      const ansLabel = escapeHtml(TAX.classes[p.stages.bugClass.answer]?.label || p.stages.bugClass.answer);
+      const pickLabel = escapeHtml(TAX.classes[prog.classPick]?.label || prog.classPick);
+      const head = prog.classResult === "green" ? "Correct." : prog.classResult === "yellow" ? "Right family." : "Not quite.";
+      const detail = prog.classResult === "green" ? `It's <strong>${ansLabel}</strong>.`
+        : `You picked <strong>${pickLabel}</strong>; it's <strong>${ansLabel}</strong>.`;
+      tail = verdictBanner(prog.classResult, head, detail) + continueBar("Continue");
+    }
     el.innerHTML = `<h2>Stage 2 of 4 — Name the bug class</h2>` +
       `<p class="hint">What kind of vulnerability is it?${scaf ? "" : " A near miss means the right family but the wrong class."}</p>` +
-      hintBtn("bugClass") + `<div class="options">${opts}</div>`;
+      hintBtn("bugClass") + `<div class="options">${opts}</div>` + tail;
     if (!prog.classResult) el.querySelectorAll(".opt").forEach((b) => b.addEventListener("click", () => guessClass(b.dataset.class)));
+    else wireContinue();
   } else if (prog.stage === 3) {
     const w = p.stages.why;
     let items = w.options.map((o, i) => ({ o, i }));
@@ -202,10 +222,17 @@ function renderStage(p, prog) {
     const opts = items.map(({ o, i }) =>
       `<button class="opt${whyStateClass(prog, p, i)}" data-i="${i}"><span>${escapeHtml(o.label)}</span>` +
       (prog.whyPick != null && o.whyWrong ? `<span class="why">${escapeHtml(o.whyWrong)}</span>` : "") + `</button>`).join("");
+    let tail = "";
+    if (prog.whyPick != null) {
+      tail = (prog.whyResult === "green"
+        ? verdictBanner("green", "Correct.", "")
+        : verdictBanner("grey", "Not quite.", "The correct answer is highlighted below.")) + continueBar("Continue");
+    }
     el.innerHTML = `<h2>Stage 3 of 4 — Why is it exploitable?</h2>` +
       `<p class="hint">${escapeHtml(w.prompt || "Pick the explanation that describes the actual mechanism.")}</p>` +
-      hintBtn("why") + `<div class="options">${opts}</div>`;
+      hintBtn("why") + `<div class="options">${opts}</div>` + tail;
     if (prog.whyPick == null) el.querySelectorAll(".opt").forEach((b) => b.addEventListener("click", () => guessWhy(parseInt(b.dataset.i, 10))));
+    else wireContinue();
   } else if (prog.stage === 4) {
     const fx = p.stages.fix;
     let items = fx.options.map((o, i) => ({ o, i }));
@@ -214,10 +241,17 @@ function renderStage(p, prog) {
       `<button class="opt${fixStateClass(prog, p, i)}" data-i="${i}"><strong>${escapeHtml(o.label)}</strong>` +
       `<pre>${diffHtml(o.diff)}</pre>` +
       (prog.fixPick != null && o.whyWrong ? `<span class="why">${escapeHtml(o.whyWrong)}</span>` : "") + `</button>`).join("");
+    let tail = "";
+    if (prog.fixPick != null) {
+      tail = (prog.fixResult === "green"
+        ? verdictBanner("green", "Correct.", "That patch closes the hole.")
+        : verdictBanner("grey", "Not quite.", "The fix that works is highlighted below.")) + continueBar("See results");
+    }
     el.innerHTML = `<h2>Stage 4 of 4 — Pick the fix that closes the hole</h2>` +
       `<p class="hint">One patch truly fixes it; the others look right but don't.</p>` +
-      hintBtn("fix") + `<div class="options">${opts}</div>`;
+      hintBtn("fix") + `<div class="options">${opts}</div>` + tail;
     if (prog.fixPick == null) el.querySelectorAll(".opt").forEach((b) => b.addEventListener("click", () => guessFix(parseInt(b.dataset.i, 10))));
+    else wireContinue();
   } else { el.innerHTML = ""; }
 }
 
@@ -264,30 +298,38 @@ function guessLine(line, file) {
   else announce(result === "yellow" ? "Near — within a few lines. Try again." : "Cold. Try again.");
   persistAndRender();
 }
+// Choice stages record the pick and reveal the verdict, but DON'T auto-advance —
+// the player sees whether they were right, then taps Continue (advanceStage).
 function guessClass(c) {
   const p = state.puzzle, prog = state.prog, ans = p.stages.bugClass.answer;
   if (prog.classResult) return;
   prog.classPick = c; prog.puzzleAnswerClass = ans;
   prog.classResult = (c === ans) ? "green" : (TAX.classes[c]?.family && TAX.classes[c].family === TAX.classes[ans]?.family ? "yellow" : "grey");
-  announce((prog.classResult === "green" ? "Correct class." : prog.classResult === "yellow" ? "Right family, wrong class." : "Wrong class.") + " Stage 3 of 4: why is it exploitable?");
-  prog.stage = 3; persistAndRender();
+  announce(prog.classResult === "green" ? "Correct." : prog.classResult === "yellow" ? "Right family, wrong class." : "Wrong.");
+  persistAndRender();
 }
 function guessWhy(i) {
   const p = state.puzzle, prog = state.prog;
   if (prog.whyPick != null) return;
   prog.whyPick = i;
   prog.whyResult = (i === p.stages.why.answerIndex) ? "green" : "grey";
-  announce((prog.whyResult === "green" ? "Correct." : "Not quite.") + " Stage 4 of 4: pick the fix.");
-  prog.stage = 4; persistAndRender();
+  announce(prog.whyResult === "green" ? "Correct." : "Not quite.");
+  persistAndRender();
 }
 function guessFix(i) {
   const p = state.puzzle, prog = state.prog;
   if (prog.fixPick != null) return;
   prog.fixPick = i;
   prog.fixResult = (i === p.stages.fix.answerIndex) ? "green" : "grey";
-  prog.stage = 5; prog.completedAt = new Date().toISOString();
+  prog.completedAt = new Date().toISOString();
   if (state.diff !== "intro" && !prog.learn && !prog.usedLearn && state.date === localToday()) bumpStreak(state.date);
-  announce((prog.fixResult === "green" ? "Correct fix." : "Wrong fix.") + " Solved — scored " + stageScore(prog) + " of 4. See the breakdown below.");
+  announce(prog.fixResult === "green" ? "Correct fix." : "Wrong fix.");
+  persistAndRender();
+}
+// Move to the next stage after a revealed verdict (5 = the breakdown).
+function advanceStage() {
+  state.prog.stage++;
+  if (state.prog.stage === 5) announce("Solved — scored " + stageScore(state.prog) + " of 4. See the breakdown below.");
   persistAndRender();
 }
 function persistAndRender() { saveProgress(progKey(), state.prog); render(); }

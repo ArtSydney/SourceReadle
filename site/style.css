@@ -145,6 +145,11 @@ main { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
 .scorecard dd.r-green { color: var(--green); }
 .scorecard dd.r-yellow { color: var(--yellow); }
 .scorecard dd.r-grey { color: var(--grey); }
+.verdict { margin-top: 14px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border); border-left-width: 4px; font-size: 14px; background: var(--bg); }
+.verdict.v-green { border-left-color: var(--green); }
+.verdict.v-yellow { border-left-color: var(--yellow); }
+.verdict.v-grey { border-left-color: var(--grey); }
+.verdict + .row { margin-top: 10px; }
 .hint-d { margin: 4px 0 12px; font-size: 13px; }
 .hint-d summary { cursor: pointer; color: var(--accent); }
 .hint-d div { margin-top: 6px; color: var(--muted); }
