@@ -6,7 +6,7 @@ let TAX = null;
 const puzzleCache = new Map();
 
 const STAGES = ["line", "bugClass", "why", "fix"]; // ordered; stage index 1..4, 5 = done
-const state = { date: null, diff: "easy", puzzle: null, prog: null, explain: false, selectedNote: null, lang: "" };
+const state = { date: null, diff: "easy", puzzle: null, prog: null, explain: false, selectedNote: null, lang: "", introIndex: 0 };
 
 const $ = (id) => document.getElementById(id);
 
@@ -32,7 +32,11 @@ function saveProgress(key, data) { const all = allProgress(); all[key] = data; t
 function getProgress(key) { return allProgress()[key] || null; }
 // Progress is keyed by the day it was played, not the puzzle id, so a puzzle that
 // recurs via rotation plays fresh instead of showing as already solved.
-function progKey() { return `${state.date}/${state.diff}`; }
+function progKey() { return state.diff === "intro" ? `intro/${state.introIndex}` : `${state.date}/${state.diff}`; }
+// Scaffolding (Intro tier): highlight the answer line, unlimited taps, 2 options, hints shown.
+function isScaffold() { return !!(state.puzzle && state.puzzle.scaffold); }
+function seedOf(p) { return parseInt(String(p.id || "").replace(/\D/g, "").slice(-3) || "0", 10); }
+function twoPos(ansPos, seed) { const w = ansPos === 0 ? 1 : 0; return (seed % 2) ? [w, ansPos] : [ansPos, w]; }
 function learnOn() { try { return localStorage.getItem(LKEY) === "1"; } catch { return false; } }
 function setLearn(v) { try { localStorage.setItem(LKEY, v ? "1" : "0"); } catch {} }
 
@@ -108,6 +112,7 @@ function renderCode(p, prog) {
       const g = prog.lineGuesses.find((x) => x.line === lineNo && (x.file || ans.file) === f.name);
       if (g) row.classList.add("g-" + g.result);
       if (prog.stage > 1 && f.name === ans.file && lineNo === ans.line) row.classList.add("reveal");
+      if (isScaffold() && prog.stage === 1 && f.name === ans.file && lineNo === ans.line) row.classList.add("target");
       if (state.explain && state.selectedNote && state.selectedNote.file === f.name && state.selectedNote.line === lineNo) row.classList.add("noted");
       if (f.notes && f.notes[String(lineNo)]) row.classList.add("has-note");
 
@@ -137,33 +142,42 @@ function showNote(f, lineNo) {
 // ---- stage panel -----------------------------------------------------------
 function hintBtn(stageKey) {
   const h = state.puzzle.training?.hints?.[stageKey];
-  if (!h || !state.prog.learn) return "";
-  return `<details class="hint-d"><summary>💡 Hint</summary><div>${mdLite(h)}</div></details>`;
+  if (!h || (!state.prog.learn && !isScaffold())) return "";
+  return `<details class="hint-d"${isScaffold() ? " open" : ""}><summary>💡 Hint</summary><div>${mdLite(h)}</div></details>`;
 }
 
 function renderStage(p, prog) {
   const el = $("stagePanel");
+  const scaf = isScaffold();
+  const seed = scaf ? seedOf(p) : 0;
   if (prog.stage === 1) {
-    const unlimited = prog.learn;
+    const unlimited = prog.learn || scaf;
     const left = p.stages.line.maxGuesses - prog.lineGuesses.length;
     const dots = prog.lineGuesses.map((g) => SYM[g.result]).join("") || "—";
+    const hintP = scaf
+      ? `👉 The bug is on the <strong>highlighted</strong> line. Tap it to confirm.`
+      : `Tap the line where the bug lives. 🟩 exact · 🟨 within ${p.stages.line.yellowRadius} lines · ⬜ cold.` +
+        (unlimited ? ` <em>Learn mode: unlimited guesses.</em>` : ` ${left} guess${left === 1 ? "" : "es"} left.`);
     el.innerHTML =
       `<h2>Stage 1 of 4 — Find the vulnerable line</h2>` +
-      `<p class="hint">Tap the line where the bug lives. 🟩 exact · 🟨 within ${p.stages.line.yellowRadius} lines · ⬜ cold.` +
-      (unlimited ? ` <em>Learn mode: unlimited guesses.</em>` : ` ${left} guess${left === 1 ? "" : "es"} left.`) + `</p>` +
+      `<p class="hint">${hintP}</p>` +
       `<div class="guessdots">${dots}</div>` + hintBtn("line") +
-      (prog.learn ? `<button class="btn secondary sm" id="revealLine">Reveal the line</button>` : "");
+      (prog.learn && !scaf ? `<button class="btn secondary sm" id="revealLine">Reveal the line</button>` : "");
     const rb = $("revealLine"); if (rb) rb.addEventListener("click", () => { prog.stage = 2; persistAndRender(); });
   } else if (prog.stage === 2) {
-    const opts = p.stages.bugClass.options.map((c) =>
+    let classes = p.stages.bugClass.options;
+    if (scaf) { const ai = classes.indexOf(p.stages.bugClass.answer); const [a, b] = twoPos(ai < 0 ? 0 : ai, seed); classes = [classes[a], classes[b]]; }
+    const opts = classes.map((c) =>
       `<button class="opt${classStateClass(prog, c)}" data-class="${escapeHtml(c)}">${escapeHtml(TAX.classes[c]?.label || c)}</button>`).join("");
     el.innerHTML = `<h2>Stage 2 of 4 — Name the bug class</h2>` +
-      `<p class="hint">What kind of vulnerability is it? 🟨 = right family, wrong class.</p>` +
+      `<p class="hint">What kind of vulnerability is it?${scaf ? "" : " 🟨 = right family, wrong class."}</p>` +
       hintBtn("bugClass") + `<div class="options">${opts}</div>`;
     if (!prog.classResult) el.querySelectorAll(".opt").forEach((b) => b.addEventListener("click", () => guessClass(b.dataset.class)));
   } else if (prog.stage === 3) {
     const w = p.stages.why;
-    const opts = w.options.map((o, i) =>
+    let items = w.options.map((o, i) => ({ o, i }));
+    if (scaf) { const [a, b] = twoPos(w.answerIndex, seed); items = [items[a], items[b]]; }
+    const opts = items.map(({ o, i }) =>
       `<button class="opt${whyStateClass(prog, p, i)}" data-i="${i}"><span>${escapeHtml(o.label)}</span>` +
       (prog.whyPick != null && o.whyWrong ? `<span class="why">${escapeHtml(o.whyWrong)}</span>` : "") + `</button>`).join("");
     el.innerHTML = `<h2>Stage 3 of 4 — Why is it exploitable?</h2>` +
@@ -171,7 +185,10 @@ function renderStage(p, prog) {
       hintBtn("why") + `<div class="options">${opts}</div>`;
     if (prog.whyPick == null) el.querySelectorAll(".opt").forEach((b) => b.addEventListener("click", () => guessWhy(parseInt(b.dataset.i, 10))));
   } else if (prog.stage === 4) {
-    const opts = p.stages.fix.options.map((o, i) =>
+    const fx = p.stages.fix;
+    let items = fx.options.map((o, i) => ({ o, i }));
+    if (scaf) { const [a, b] = twoPos(fx.answerIndex, seed); items = [items[a], items[b]]; }
+    const opts = items.map(({ o, i }) =>
       `<button class="opt${fixStateClass(prog, p, i)}" data-i="${i}"><strong>${escapeHtml(o.label)}</strong>` +
       `<pre>${diffHtml(o.diff)}</pre>` +
       (prog.fixPick != null && o.whyWrong ? `<span class="why">${escapeHtml(o.whyWrong)}</span>` : "") + `</button>`).join("");
@@ -221,7 +238,7 @@ function guessLine(line, file) {
   else if (sameFile && Math.abs(line - ans.line) <= ans.yellowRadius) result = "yellow";
   prog.lineGuesses.push({ line, file: f, result });
   if (result === "green") { prog.lineSolved = true; prog.stage = 2; }
-  else if (!prog.learn && prog.lineGuesses.length >= ans.maxGuesses) { prog.stage = 2; }
+  else if (!prog.learn && !isScaffold() && prog.lineGuesses.length >= ans.maxGuesses) { prog.stage = 2; }
   persistAndRender();
 }
 function guessClass(c) {
@@ -244,7 +261,7 @@ function guessFix(i) {
   prog.fixPick = i;
   prog.fixResult = (i === p.stages.fix.answerIndex) ? "green" : "grey";
   prog.stage = 5; prog.completedAt = new Date().toISOString();
-  if (!prog.learn && !prog.usedLearn && state.date === localToday()) bumpStreak(state.date);
+  if (state.diff !== "intro" && !prog.learn && !prog.usedLearn && state.date === localToday()) bumpStreak(state.date);
   persistAndRender();
 }
 function persistAndRender() { saveProgress(progKey(), state.prog); render(); }
@@ -340,7 +357,34 @@ function populateLangs() {
   $("langSelect").value = state.lang;
 }
 
+async function loadIntro() {
+  const list = INDEX.intro || [];
+  $("langSelect").style.display = "none";
+  document.querySelectorAll("#difftabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.diff === "intro" ? "true" : "false"));
+  if (!list.length) {
+    state.puzzle = null; $("meta").innerHTML = ""; $("stagePanel").innerHTML = ""; $("notePanel").classList.add("hidden"); $("resultPanel").classList.add("hidden");
+    $("dateLabel").textContent = "Intro"; $("codePanel").className = "code";
+    $("codePanel").innerHTML = `<div class="filename">No intro lessons yet.</div>`;
+    $("prevDay").disabled = $("nextDay").disabled = true; return;
+  }
+  state.introIndex = Math.max(0, Math.min(state.introIndex, list.length - 1));
+  let p = null;
+  try { p = await loadJSON(`intro/${list[state.introIndex]}`); } catch {}
+  state.puzzle = p; state.explain = false; state.selectedNote = null;
+  if (p) {
+    state.prog = getProgress(progKey()) || freshProgress(p);
+    if (state.prog.learn === undefined) state.prog.learn = learnOn();
+    if (state.prog.stage > 1) state.prog.puzzleAnswerClass = p.stages.bugClass.answer;
+  }
+  $("dateLabel").innerHTML = `Intro · Lesson ${state.introIndex + 1} / ${list.length}`;
+  $("prevDay").disabled = state.introIndex <= 0;
+  $("nextDay").disabled = state.introIndex >= list.length - 1;
+  render();
+}
+
 async function load() {
+  if (state.diff === "intro") return loadIntro();
+  $("langSelect").style.display = "";
   populateLangs();
   const pd = playableDates();
   if (!pd.includes(state.date)) state.date = pd.length ? pd[pd.length - 1] : null;
@@ -413,8 +457,14 @@ function maybeShowTutorial() { let seen; try { seen = localStorage.getItem(TKEY)
 function wire() {
   wireTutorial();
   document.querySelectorAll("#difftabs button").forEach((b) => b.addEventListener("click", () => { state.diff = b.dataset.diff; load(); }));
-  $("prevDay").addEventListener("click", () => { const pd = playableDates(); const i = pd.indexOf(state.date); if (i > 0) { state.date = pd[i - 1]; load(); } });
-  $("nextDay").addEventListener("click", () => { const pd = playableDates(); const i = pd.indexOf(state.date); if (i >= 0 && i < pd.length - 1) { state.date = pd[i + 1]; load(); } });
+  $("prevDay").addEventListener("click", () => {
+    if (state.diff === "intro") { if (state.introIndex > 0) { state.introIndex--; load(); } return; }
+    const pd = playableDates(); const i = pd.indexOf(state.date); if (i > 0) { state.date = pd[i - 1]; load(); }
+  });
+  $("nextDay").addEventListener("click", () => {
+    if (state.diff === "intro") { if (state.introIndex < (INDEX.intro || []).length - 1) { state.introIndex++; load(); } return; }
+    const pd = playableDates(); const i = pd.indexOf(state.date); if (i >= 0 && i < pd.length - 1) { state.date = pd[i + 1]; load(); }
+  });
   $("langSelect").addEventListener("change", () => { state.lang = $("langSelect").value; setLangPref(state.lang); state.date = resolveDate(state.date); load(); });
   $("explainBtn").addEventListener("click", () => { state.explain = !state.explain; if (!state.explain) $("notePanel").classList.add("hidden"); render(); });
   $("learnBtn").addEventListener("click", () => {

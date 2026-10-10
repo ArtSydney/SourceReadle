@@ -92,6 +92,9 @@ main { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
 .coderow.g-yellow .src { background: rgba(234,179,8,0.20); }
 .coderow.g-grey .src { background: rgba(156,163,175,0.14); }
 .coderow.reveal .src { box-shadow: inset 3px 0 0 var(--green); }
+.coderow.target .src { box-shadow: inset 3px 0 0 var(--accent); background: rgba(129,140,248,0.16); animation: targetpulse 1.6s ease-in-out infinite; }
+@keyframes targetpulse { 0%,100% { background: rgba(129,140,248,0.10); } 50% { background: rgba(129,140,248,0.22); } }
+@media (prefers-reduced-motion: reduce) { .coderow.target .src { animation: none; } }
 .code.clickable .coderow.has-note .ln { color: #7aa2ff; }
 .code.clickable .coderow.has-note .ln::after { content: "•"; margin-left: 2px; }
 .coderow.noted .src { background: rgba(129,140,248,0.22); box-shadow: inset 3px 0 0 var(--accent); }

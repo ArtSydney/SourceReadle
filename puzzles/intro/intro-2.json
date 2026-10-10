@@ -1,0 +1,92 @@
+{
+  "id": "srd-9002",
+  "date": "2026-01-01",
+  "difficulty": "intro",
+  "scaffold": true,
+  "language": "python",
+  "estimatedMinutes": 2,
+  "snippet": {
+    "files": [
+      {
+        "name": "logs.py",
+        "code": "import os\n\ndef show_logs(service):\n    # Print the logs for a service.\n    os.system(\"journalctl -u \" + service)",
+        "notes": {
+          "5": "Runs a shell command, with the service name glued onto the end."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "logs.py",
+      "line": 5,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "command-inj",
+      "options": [
+        "command-inj",
+        "sqli",
+        "path-traversal",
+        "code-inj"
+      ]
+    },
+    "why": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "`os.system` runs the text in a shell, so characters like `;` in `service` start new commands"
+        },
+        {
+          "label": "journalctl needs root",
+          "whyWrong": "Permissions aren't the issue; the shell interpreting the input is."
+        },
+        {
+          "label": "The logs could be very long",
+          "whyWrong": "Output size has nothing to do with the vulnerability."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "Run it without a shell, passing arguments as a list",
+          "diff": "-    os.system(\"journalctl -u \" + service)\n+    import subprocess\n+    subprocess.run([\"journalctl\", \"-u\", service], check=True)"
+        },
+        {
+          "label": "Put the service name in quotes",
+          "diff": "-    os.system(\"journalctl -u \" + service)\n+    os.system(\"journalctl -u '\" + service + \"'\")",
+          "whyWrong": "A quote in the input breaks out, and `$(...)` still runs inside quotes."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle intro"
+  },
+  "training": {
+    "exploit": "Pass `ssh; rm -rf /` (or `ssh; id`) and the shell runs journalctl, then the injected command.",
+    "concepts": [
+      "CWE-78"
+    ],
+    "hints": {
+      "line": "Find where a built-up string is handed to the system.",
+      "bugClass": "The input reaches a shell.",
+      "why": "What does the shell do with `;`?",
+      "fix": "Don't use a shell — pass arguments as a list."
+    }
+  },
+  "writeup": {
+    "summary": "`os.system` passes its string to the shell, so shell metacharacters in `service` run as commands. Executing with `subprocess.run([...])` passes the value as a single argument with no shell to interpret it.",
+    "readNext": [
+      {
+        "label": "OWASP Command Injection",
+        "url": "https://owasp.org/www-community/attacks/Command_Injection"
+      }
+    ]
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "id": "srd-9004",
+  "date": "2026-01-01",
+  "difficulty": "intro",
+  "scaffold": true,
+  "language": "python",
+  "estimatedMinutes": 2,
+  "snippet": {
+    "files": [
+      {
+        "name": "pay.py",
+        "code": "import requests\n\nAPI_KEY = \"sk_live_EXAMPLE_not_a_real_key\"\n\ndef charge(amount, token):\n    return requests.post(\n        \"https://api.pay.example/charge\",\n        json={\"amount\": amount, \"source\": token},\n        headers={\"Authorization\": \"Bearer \" + API_KEY})",
+        "notes": {
+          "3": "A live payment API key written directly into the source code.",
+          "9": "Sends the key as the auth header on every charge."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "pay.py",
+      "line": 3,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "hardcoded-secret",
+      "options": [
+        "hardcoded-secret",
+        "weak-crypto",
+        "sqli",
+        "ssrf"
+      ]
+    },
+    "why": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "A live secret is in the source, so anyone who sees the code (repo, history, a leaked build) can use the payment account"
+        },
+        {
+          "label": "The URL uses https",
+          "whyWrong": "https is good; it's not the problem."
+        },
+        {
+          "label": "`amount` isn't validated",
+          "whyWrong": "Worth doing, but not the secret-in-code issue."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "Read the key from an environment variable (and rotate the exposed one)",
+          "diff": "-API_KEY = \"sk_live_EXAMPLE_not_a_real_key\"\n+import os\n+API_KEY = os.environ[\"PAY_API_KEY\"]"
+        },
+        {
+          "label": "Base64-encode the key in the file",
+          "diff": "-API_KEY = \"sk_live_EXAMPLE_not_a_real_key\"\n+API_KEY = base64.b64decode(\"c2tfbGl2ZV8...\").decode()",
+          "whyWrong": "Encoding is trivially reversible; the secret is still shipped in the code."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle intro"
+  },
+  "training": {
+    "exploit": "The key leaks through the git history or a public repo; an attacker uses it against the payment API to read data or issue refunds to themselves. Secret scanners flag `sk_live_` keys within minutes.",
+    "concepts": [
+      "CWE-798"
+    ],
+    "hints": {
+      "line": "Spot the credential that should never be in source.",
+      "bugClass": "A secret is embedded in the code.",
+      "why": "Who can read the repository and its history?",
+      "fix": "Load secrets from the environment at runtime."
+    }
+  },
+  "writeup": {
+    "summary": "A live API key is committed in source, so anyone with access to the code can use the payment account. Secrets belong in environment variables or a secret manager, injected at runtime — and any key that was in source must be rotated.",
+    "readNext": [
+      {
+        "label": "OWASP Secrets Management",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
+      }
+    ]
+  }
+}

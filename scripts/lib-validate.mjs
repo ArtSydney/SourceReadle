@@ -50,10 +50,14 @@ export function validatePuzzle(p, ctx = {}) {
     if (!(ln.maxGuesses >= 1 && ln.maxGuesses <= 10)) fail("stages.line.maxGuesses out of 1..10");
   }
 
+  // Scaffolded (Intro) puzzles intentionally present fewer options.
+  const minBug = p.scaffold ? 2 : 4;
+  const minOpt = p.scaffold ? 2 : 3;
+
   const bc = p.stages?.bugClass;
   if (!bc) fail("stages.bugClass missing");
   else {
-    if (!Array.isArray(bc.options) || bc.options.length < 4) fail("bugClass needs >= 4 options");
+    if (!Array.isArray(bc.options) || bc.options.length < minBug) fail(`bugClass needs >= ${minBug} options`);
     if (!bc.options?.includes(bc.answer)) fail(`bugClass.answer '${bc.answer}' not among options`);
     for (const c of bc.options || []) if (!taxonomy.classes[c]) fail(`bugClass option '${c}' not in taxonomy`);
     if (new Set(bc.options).size !== (bc.options || []).length) fail("bugClass options not unique");
@@ -63,7 +67,7 @@ export function validatePuzzle(p, ctx = {}) {
   if (!wy) fail("stages.why missing");
   else {
     const opts = wy.options || [];
-    if (opts.length < 3) fail("why needs >= 3 options");
+    if (opts.length < minOpt) fail(`why needs >= ${minOpt} options`);
     if (!(wy.answerIndex >= 0 && wy.answerIndex < opts.length)) fail("why.answerIndex out of range");
     opts.forEach((o, i) => {
       if (!o.label) fail(`why option ${i} missing label`);
@@ -78,7 +82,7 @@ export function validatePuzzle(p, ctx = {}) {
   if (!fx) fail("stages.fix missing");
   else {
     const opts = fx.options || [];
-    if (opts.length < 3) fail("fix needs >= 3 options");
+    if (opts.length < minOpt) fail(`fix needs >= ${minOpt} options`);
     if (!(fx.answerIndex >= 0 && fx.answerIndex < opts.length)) fail("fix.answerIndex out of range");
     opts.forEach((o, i) => {
       if (!o.label || typeof o.diff !== "string" || !o.diff) fail(`fix option ${i} missing label/diff`);

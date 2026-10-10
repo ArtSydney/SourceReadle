@@ -1,0 +1,92 @@
+{
+  "id": "srd-9005",
+  "date": "2026-01-01",
+  "difficulty": "intro",
+  "scaffold": true,
+  "language": "python",
+  "estimatedMinutes": 2,
+  "snippet": {
+    "files": [
+      {
+        "name": "calc.py",
+        "code": "def calculate(expr):\n    # Work out the math the user typed.\n    return eval(expr)",
+        "notes": {
+          "3": "Runs the user's text as Python with `eval`."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "calc.py",
+      "line": 3,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "code-inj",
+      "options": [
+        "code-inj",
+        "sqli",
+        "command-inj",
+        "path-traversal"
+      ]
+    },
+    "why": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "`eval` runs the input as Python, so the user can execute any code, not just math"
+        },
+        {
+          "label": "`eval` is slower than a parser",
+          "whyWrong": "Speed isn't the issue; it's that the input runs as code."
+        },
+        {
+          "label": "The result might not be a number",
+          "whyWrong": "A type surprise is minor next to running arbitrary code."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "Parse the math safely instead of eval",
+          "diff": "-    return eval(expr)\n+    import ast, operator as op\n+    # ... evaluate an ast parsed with ast.parse(expr, mode='eval') over an allow-list of operators ...\n+    return safe_eval(expr)"
+        },
+        {
+          "label": "Wrap eval in try/except",
+          "diff": "-    return eval(expr)\n+    try: return eval(expr)\n+    except Exception: return None",
+          "whyWrong": "The attacker's code already ran before any exception; catching it doesn't help."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle intro"
+  },
+  "training": {
+    "exploit": "Type `__import__('os').system('id')` and the program runs that command instead of doing math.",
+    "concepts": [
+      "CWE-95"
+    ],
+    "hints": {
+      "line": "Find where the input is executed, not just read.",
+      "bugClass": "The input becomes running code.",
+      "why": "What can `eval` run besides math?",
+      "fix": "Parse the expression safely; never eval user input."
+    }
+  },
+  "writeup": {
+    "summary": "`eval(expr)` executes the user's input as Python, so anything the program can do, the user can do. Evaluate arithmetic with a safe parser (e.g. an `ast`-based allow-list) that treats the input purely as data.",
+    "readNext": [
+      {
+        "label": "MDN/OWASP: Code Injection",
+        "url": "https://owasp.org/www-community/attacks/Code_Injection"
+      }
+    ]
+  }
+}

@@ -9,7 +9,7 @@ should read this file first, find **NOW / NEXT**, and continue. Update the
 ## Resume pointer
 
 - **NOW:** _nothing in progress_
-- **NEXT:** `T0.2` (Intro tier below Easy) — see Phase 0.
+- **NEXT:** `T0.3` (Structured feedback / better 👎 report) — see Phase 0.
 - **Last updated:** 2026-10-10
 
 When you finish a task: tick its box, move the pointer to the next task, add a one-line
@@ -71,9 +71,7 @@ GitHub Pages; only Phases 4 & 6 require introducing a backend.**
 Small, self-contained, each ~one session. Do these first to build momentum and fix the leakiest parts of the funnel.
 
 - [x] **T0.1 — First-run tutorial.** ✅ Done. 5-step overlay (welcome + the 4 stages) shown on first load, gated on `localStorage` `sourcereadle:tutorial:v1`; "?" button in the header replays it; Back/Next/Skip/Esc; mobile-tested. Files: `site/index.html`, `site/style.css`, `site/app.js` (wireTutorial/openTutorial/maybeShowTutorial).
-- [ ] **T0.2 — Intro tier (below Easy).** An "Intro" difficulty with heavy scaffolding (bug pre-highlighted, 2 options per stage).
-  - Steps: extend taxonomy/schema to allow `difficulty: "intro"` (or a per-puzzle `scaffold` flag); add tab; author/generate 5 intro puzzles.
-  - Accept: a non-expert can complete an Intro puzzle with near-100% success and learn one concept.
+- [x] **T0.2 — Intro tier (below Easy).** ✅ Done. Separate guided 5-lesson set (`puzzles/intro/intro-1..5.json`, `difficulty:"intro"`, `scaffold:true`). "Intro" tab enters a lesson-navigator mode (date nav → "Lesson N/5", language selector hidden). Scaffolding: the vulnerable line is pre-highlighted (pulsing), unlimited taps, only 2 options per choice stage (answer + one distractor, index-preserving), hints shown open. Does **not** affect the daily streak; progress keyed `intro/<index>`. Schema adds `difficulty:"intro"` + `scaffold`; `lib-validate` relaxes option minimums for scaffold puzzles; `build-site` copies `puzzles/intro/` → `_site/intro/` and lists them in `index.json.intro`; validator handles the non-dated `intro/` folder. Tested full solve + navigation + Intro↔daily toggle on desktop & mobile.
 - [ ] **T0.3 — Better feedback loop.** Make the 👎 report capture structured data (which stage felt wrong, free text) and land somewhere actionable.
   - Steps: replace the raw GitHub-issue link with a small form (prefilled issue body, or a serverless endpoint if D1 resolved); label issues `player-report`.
   - Accept: a report tells us the puzzle id, the stage, and the complaint without the player writing boilerplate.
@@ -154,3 +152,4 @@ Do **Phase 0** now (cheap, fixes the funnel). Then **Phase 1** (trust) because i
 
 - 2026-10-10 — Roadmap created.
 - 2026-10-10 — T0.1 first-run tutorial shipped (5-step overlay + "?" replay).
+- 2026-10-10 — T0.2 Intro tier shipped (5 guided scaffolded lessons + Intro tab).

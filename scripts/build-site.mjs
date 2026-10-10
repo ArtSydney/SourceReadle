@@ -43,8 +43,19 @@ cpSync(join(root, "site"), out, { recursive: true });
 cpSync(join(root, "schema", "taxonomy.json"), join(out, "taxonomy.json"));
 writeFileSync(join(out, ".nojekyll"), "");          // never let Pages run Jekyll on the artifact
 
-// --- load the authored catalog -------------------------------------------------
+// --- intro set (guided onboarding; not dated, not rotated) ---------------------
 const puzzlesSrc = join(root, "puzzles");
+const introDir = join(puzzlesSrc, "intro");
+const intro = [];
+if (existsSync(introDir)) {
+  mkdirSync(join(out, "intro"), { recursive: true });
+  for (const f of readdirSync(introDir).filter((x) => x.endsWith(".json")).sort()) {
+    cpSync(join(introDir, f), join(out, "intro", f));
+    intro.push(f);
+  }
+}
+
+// --- load the authored catalog -------------------------------------------------
 const authoredDates = readdirSync(puzzlesSrc).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
 if (authoredDates.length === 0) { console.error("No authored puzzles."); process.exit(1); }
 
@@ -109,7 +120,7 @@ for (let d = windowStart; d <= end; d = addDays(d, 1)) {
 writeFileSync(join(out, "index.json"), JSON.stringify({
   generated: new Date().toISOString(),
   cutoff, lead, published: end, rotation: rotate, launch: START,
-  dates, byDate, count,
+  dates, byDate, count, intro,
 }, null, 2));
 
 console.log(`Built _site/ (cutoff ${cutoff}, rotation ${rotate ? "on" : "off"}): ${dates.length} day(s), ${count} puzzle(s).`);

@@ -1,0 +1,93 @@
+{
+  "id": "srd-9001",
+  "date": "2026-01-01",
+  "difficulty": "intro",
+  "scaffold": true,
+  "language": "python",
+  "estimatedMinutes": 2,
+  "snippet": {
+    "files": [
+      {
+        "name": "users.py",
+        "code": "import sqlite3\n\ndef find_user(db, username):\n    # Look up a user by name.\n    query = \"SELECT * FROM users WHERE name = '\" + username + \"'\"\n    return db.execute(query).fetchone()",
+        "notes": {
+          "5": "Builds the SQL command by gluing the username straight into the text.",
+          "6": "Runs that command against the database."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "users.py",
+      "line": 5,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "sqli",
+      "options": [
+        "sqli",
+        "command-inj",
+        "path-traversal",
+        "code-inj"
+      ]
+    },
+    "why": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "The username is glued into the SQL text, so the database treats the input as commands, not data"
+        },
+        {
+          "label": "The database file could be missing",
+          "whyWrong": "A missing file is an error, not a security hole."
+        },
+        {
+          "label": "`fetchone` only returns one row",
+          "whyWrong": "How many rows come back isn't the issue."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "Pass the name as a parameter with ?",
+          "diff": "-    query = \"SELECT * FROM users WHERE name = '\" + username + \"'\"\n-    return db.execute(query).fetchone()\n+    return db.execute(\"SELECT * FROM users WHERE name = ?\", (username,)).fetchone()"
+        },
+        {
+          "label": "Make the username uppercase first",
+          "diff": "+    username = username.upper()",
+          "whyWrong": "Changing case does nothing to stop the input being read as SQL."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle intro"
+  },
+  "training": {
+    "exploit": "Type a name like `' OR '1'='1` and the WHERE clause is always true, so it returns the first user — often an admin.",
+    "concepts": [
+      "CWE-89"
+    ],
+    "hints": {
+      "line": "Look at the line that builds the SQL text.",
+      "bugClass": "The input ends up inside a database query.",
+      "why": "Ask what the database reads the name as.",
+      "fix": "Send the value separately with a `?` placeholder."
+    }
+  },
+  "writeup": {
+    "summary": "The username is concatenated into the SQL string, so an attacker's input becomes part of the command — classic SQL injection. Using a bound parameter (`?`) sends the value as data the database never treats as SQL.",
+    "readNext": [
+      {
+        "label": "OWASP SQL Injection",
+        "url": "https://owasp.org/www-community/attacks/SQL_Injection"
+      }
+    ]
+  }
+}

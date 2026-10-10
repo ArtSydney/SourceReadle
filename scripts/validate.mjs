@@ -17,6 +17,19 @@ const seenIds = new Set();
 if (!existsSync(puzzlesDir)) { console.error("No puzzles/ directory."); process.exit(1); }
 
 for (const date of readdirSync(puzzlesDir).sort()) {
+  // The 'intro' folder holds the guided onboarding set (not dated, not rotated).
+  if (date === "intro") {
+    for (const f of readdirSync(join(puzzlesDir, "intro")).filter((x) => x.endsWith(".json")).sort()) {
+      count++;
+      let p;
+      try { p = JSON.parse(readFileSync(join(puzzlesDir, "intro", f), "utf8")); }
+      catch (e) { errors.push(`intro/${f}: invalid JSON — ${e.message}`); continue; }
+      if (p.difficulty !== "intro") errors.push(`intro/${f}: difficulty must be "intro"`);
+      const r = validatePuzzle(p, { seenIds });
+      errors.push(...r.errors); warnings.push(...r.warnings);
+    }
+    continue;
+  }
   if (!DATE_RE.test(date)) { errors.push(`Folder '${date}' is not a YYYY-MM-DD date.`); continue; }
   for (const diff of DIFFS) {
     const file = join(puzzlesDir, date, `${diff}.json`);

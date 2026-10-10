@@ -19,7 +19,11 @@
     },
     "difficulty": {
       "type": "string",
-      "enum": ["easy", "medium", "hard"]
+      "enum": ["intro", "easy", "medium", "hard"]
+    },
+    "scaffold": {
+      "type": "boolean",
+      "description": "Heavy-scaffolding mode (used by the Intro tier): the player pre-highlights the vulnerable line, gives unlimited taps, shows only two options per choice stage, and keeps hints visible. Guides a beginner to near-certain success."
     },
     "language": {
       "type": "string",

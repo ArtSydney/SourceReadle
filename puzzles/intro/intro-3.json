@@ -1,0 +1,93 @@
+{
+  "id": "srd-9003",
+  "date": "2026-01-01",
+  "difficulty": "intro",
+  "scaffold": true,
+  "language": "python",
+  "estimatedMinutes": 2,
+  "snippet": {
+    "files": [
+      {
+        "name": "notes.py",
+        "code": "def read_note(name):\n    # Read a saved note from the notes folder.\n    path = \"notes/\" + name\n    return open(path).read()",
+        "notes": {
+          "3": "Builds a file path by gluing the user's name onto the folder.",
+          "4": "Opens and reads whatever file that path points to."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": {
+      "file": "notes.py",
+      "line": 3,
+      "yellowRadius": 1,
+      "maxGuesses": 5
+    },
+    "bugClass": {
+      "answer": "path-traversal",
+      "options": [
+        "path-traversal",
+        "sqli",
+        "command-inj",
+        "hardcoded-secret"
+      ]
+    },
+    "why": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "`name` is attacker-controlled, so `../../etc/passwd` escapes the notes folder and reads any file"
+        },
+        {
+          "label": "The note might not exist",
+          "whyWrong": "A missing file is an error, not the vulnerability."
+        },
+        {
+          "label": "`open` doesn't close the file",
+          "whyWrong": "A leaked file handle is a code-quality nit, not this bug."
+        }
+      ]
+    },
+    "fix": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "Strip the path down to a bare filename and confirm it stays in the folder",
+          "diff": "-    path = \"notes/\" + name\n+    import os\n+    path = os.path.join(\"notes\", os.path.basename(name))\n+    if not os.path.realpath(path).startswith(os.path.realpath(\"notes\")):\n+        raise ValueError(\"bad path\")"
+        },
+        {
+          "label": "Add a .txt extension",
+          "diff": "-    path = \"notes/\" + name\n+    path = \"notes/\" + name + \".txt\"",
+          "whyWrong": "`../../etc/passwd\\0` tricks aside, `../../secret.txt` still escapes; an extension doesn't confine the folder."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "CC0-1.0",
+    "attribution": "SourceReadle intro"
+  },
+  "training": {
+    "exploit": "Ask for `../../etc/passwd` and the code reads a system file far outside the notes folder.",
+    "concepts": [
+      "CWE-22"
+    ],
+    "hints": {
+      "line": "Find where the user's input becomes part of a file path.",
+      "bugClass": "Input chooses which file is read.",
+      "why": "Where can `..` take the path?",
+      "fix": "Reduce to a filename and verify it stays inside the folder."
+    }
+  },
+  "writeup": {
+    "summary": "`name` is concatenated into a file path with no confinement, so `../` sequences escape the notes folder (path traversal). The fix reduces the input to a bare filename and verifies the resolved path is still inside the intended folder.",
+    "readNext": [
+      {
+        "label": "OWASP Path Traversal",
+        "url": "https://owasp.org/www-community/attacks/Path_Traversal"
+      }
+    ]
+  }
+}
