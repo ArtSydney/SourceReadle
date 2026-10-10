@@ -22,6 +22,11 @@
 }
 * { box-sizing: border-box; }
 html, body, .code, .code .src { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+}
 body {
   margin: 0; background: var(--bg); color: var(--ink);
   font-family: var(--sans); line-height: 1.45; overflow-x: hidden;
@@ -59,7 +64,7 @@ body {
 .report-chips button:hover { border-color: var(--accent); }
 .report-chips button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
 #reportText { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; resize: vertical; border: 1px solid var(--border); background: var(--bg); color: var(--ink); border-radius: 10px; padding: 9px 11px; }
-#reportText:focus { outline: none; border-color: var(--accent); }
+#reportText:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .report-ctx { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: pre-wrap; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 0 0 4px; }
 .report-nav { justify-content: flex-end; }
 
@@ -104,6 +109,10 @@ main { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
 .coderow.g-green .src { background: rgba(34,197,94,0.22); }
 .coderow.g-yellow .src { background: rgba(234,179,8,0.20); }
 .coderow.g-grey .src { background: rgba(156,163,175,0.14); }
+.coderow .mark { margin-left: auto; align-self: center; flex: none; padding-left: 12px; font-family: var(--sans); font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--codeln); }
+.coderow.g-green .mark, .coderow.reveal .mark { color: var(--green); }
+.coderow.g-yellow .mark { color: var(--yellow); }
+.coderow.g-grey .mark { color: var(--grey); }
 .coderow.reveal .src { box-shadow: inset 3px 0 0 var(--green); }
 .coderow.target .src { box-shadow: inset 3px 0 0 var(--accent); background: rgba(129,140,248,0.16); animation: targetpulse 1.6s ease-in-out infinite; }
 @keyframes targetpulse { 0%,100% { background: rgba(129,140,248,0.10); } 50% { background: rgba(129,140,248,0.22); } }
@@ -130,6 +139,12 @@ main { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
 .opt.wrong { border-color: #ef4444; background: rgba(239,68,68,0.10); }
 .opt.family { border-color: var(--yellow); background: rgba(234,179,8,0.12); }
 .opt .why { display: block; color: var(--muted); font-size: 12px; margin-top: 6px; }
+.scorecard { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 2px 0 12px; font-size: 13px; }
+.scorecard dt { color: var(--muted); }
+.scorecard dd { margin: 0; font-weight: 600; }
+.scorecard dd.r-green { color: var(--green); }
+.scorecard dd.r-yellow { color: var(--yellow); }
+.scorecard dd.r-grey { color: var(--grey); }
 .hint-d { margin: 4px 0 12px; font-size: 13px; }
 .hint-d summary { cursor: pointer; color: var(--accent); }
 .hint-d div { margin-top: 6px; color: var(--muted); }

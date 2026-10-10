@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SourceReadle</title>
   <meta name="description" content="A daily code-reading puzzle: find the vulnerability, name its class, pick the fix." />
-  <link rel="stylesheet" href="style.css?v=8" />
+  <link rel="stylesheet" href="style.css?v=9" />
 </head>
 <body>
   <header class="topbar">
@@ -23,7 +23,7 @@
       <span id="dateLabel">—</span>
       <button id="nextDay" aria-label="Next day">›</button>
     </div>
-    <div class="difftabs" id="difftabs" role="tablist">
+    <div class="difftabs" id="difftabs" role="tablist" aria-label="Difficulty">
       <button data-diff="intro" role="tab">Intro</button>
       <button data-diff="easy" role="tab">Easy</button>
       <button data-diff="medium" role="tab">Medium</button>
@@ -31,8 +31,8 @@
     </div>
     <div class="modes">
       <select id="langSelect" class="lang" title="Filter by language" aria-label="Filter by language"></select>
-      <button id="explainBtn" class="toggle" aria-pressed="false" title="Tap any line to see what it does">🔍 Explain</button>
-      <button id="learnBtn" class="toggle" aria-pressed="false" title="Unlimited guesses + hints, no streak">🎓 Learn</button>
+      <button id="explainBtn" class="toggle" aria-pressed="false" title="Tap any line to see what it does">Explain</button>
+      <button id="learnBtn" class="toggle" aria-pressed="false" title="Unlimited guesses + hints, no streak">Learn</button>
     </div>
   </nav>
 
@@ -50,13 +50,15 @@
 
   <footer class="foot">
     <span>Read code. Find the bug. Learn the fix.</span>
-    <a id="reportLink" href="#" target="_blank" rel="noopener">Report this puzzle 👎</a>
+    <a id="reportLink" href="#" target="_blank" rel="noopener">Report this puzzle</a>
   </footer>
+
+  <div id="live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
   <div class="tut hidden" id="report" role="dialog" aria-modal="true" aria-label="Report this puzzle">
     <div class="tut-card report-card">
       <button class="tut-skip" id="reportClose" aria-label="Close">✕</button>
-      <h3 class="report-title">Report this puzzle 👎</h3>
+      <h3 class="report-title">Report this puzzle</h3>
       <p class="report-sub">What felt off? This opens a prefilled GitHub issue — nothing is sent automatically.</p>
       <div class="report-field">
         <label>Which part seemed wrong?</label>
@@ -86,6 +88,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=8"></script>
+  <script src="app.js?v=9"></script>
 </body>
 </html>

@@ -9,7 +9,7 @@ should read this file first, find **NOW / NEXT**, and continue. Update the
 ## Resume pointer
 
 - **NOW:** _nothing in progress_
-- **NEXT:** `T0.5` (Accessibility & polish pass) — see Phase 0.
+- **NEXT:** `T1.1` (Define the verification contract) — Phase 0 complete; see Phase 1 ⭐.
 - **Last updated:** 2026-10-10
 
 When you finish a task: tick its box, move the pointer to the next task, add a one-line
@@ -78,7 +78,7 @@ Small, self-contained, each ~one session. Do these first to build momentum and f
 - [x] **T0.4 — Meaningful share grid.** ✅ Share text is now a solid 4-row square grid: row 1 is the line-search journey (one cell per tap, in order), rows 2–4 are the Class/Why/Fix verdicts centered in ⬛ bands so the block stays a rectangle. Header carries a `score/4` hook (🎯 on a clean sweep) + learn tag. On-screen legend maps the rows; ⬛ padding is distinct from a ⬜ cold miss. Mobile font shrinks so a 5-wide block fits with no overflow.
   - Steps: design the glyph language; implement in `shareText()`; keep it spoiler-free.
   - Accept: two different solves produce visibly different, interesting grids; posting one makes a non-player curious.
-- [ ] **T0.5 — Accessibility & polish pass.** Keyboard nav, focus states, ARIA on the stages, reduced-motion, color-contrast check for the green/yellow/grey feedback (color-blind safe: add symbols/patterns, not just color).
+- [x] **T0.5 — Accessibility & polish pass.** ✅ Code lines are keyboard-operable (role=button, tabindex, Enter/Space) with aria-labels; a polite live region announces every stage result for screen readers; difficulty tabs use roving tabindex + arrow/Home/End nav; global `:focus-visible` ring; broad reduced-motion guard. Colour-blind safety via words, not colour: line feedback shows `exact / near / cold` text markers, and the breakdown has a text scorecard (`Find: Solved in N taps`, `Class: Right family…`, etc.) beside the colour grid. Also an emoji cleanup pass (per user feedback) — removed decorative emoji from chrome (buttons, hints, headers, legends, report); kept only functional glyphs (the Wordle feedback/share squares, the streak flame, the ✕ close).
   - Accept: fully keyboard-playable; passes a contrast checker; feedback distinguishable without color.
 
 ## Phase 1 — Trust: execution-verified answer keys  ⭐ highest leverage
@@ -155,3 +155,4 @@ Do **Phase 0** now (cheap, fixes the funnel). Then **Phase 1** (trust) because i
 - 2026-10-10 — T0.2 Intro tier shipped (5 guided scaffolded lessons + Intro tab).
 - 2026-10-10 — T0.3 structured feedback shipped (👎 report modal → prefilled, labeled GitHub issue; assets bumped to ?v=7).
 - 2026-10-10 — T0.4 meaningful share grid shipped (Wordle-style journey grid + score/4; assets bumped to ?v=8).
+- 2026-10-10 — T0.5 accessibility & polish shipped (keyboard/ARIA/live region, roving tabs, focus ring, reduced-motion, colour-blind text cues) + emoji cleanup. Phase 0 complete. Assets bumped to ?v=9.

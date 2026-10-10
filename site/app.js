@@ -9,6 +9,8 @@ const STAGES = ["line", "bugClass", "why", "fix"]; // ordered; stage index 1..4,
 const state = { date: null, diff: "easy", puzzle: null, prog: null, explain: false, selectedNote: null, lang: "", introIndex: 0 };
 
 const $ = (id) => document.getElementById(id);
+// Push a short message to the polite live region for screen-reader feedback.
+function announce(msg) { const el = $("live"); if (el) { el.textContent = ""; requestAnimationFrame(() => { el.textContent = msg; }); } }
 
 async function loadJSON(path) {
   const r = await fetch(path, { cache: "no-cache" });
@@ -121,10 +123,29 @@ function renderCode(p, prog) {
       const src = document.createElement("span"); src.className = "src"; src.textContent = text;
       row.append(ln, src);
 
-      row.addEventListener("click", () => {
-        if (state.explain) showNote(f, lineNo);
-        else if (guessing) guessLine(lineNo, f.name);
-      });
+      // Non-colour cue: a short word label beside any line that carries a verdict,
+      // so the feedback reads without relying on the green/yellow/grey fill.
+      const markText = g ? { green: "exact", yellow: "near", grey: "cold" }[g.result]
+        : (row.classList.contains("reveal") ? "the bug" : "");
+      if (markText) {
+        const m = document.createElement("span"); m.className = "mark"; m.textContent = markText;
+        row.append(m);
+      }
+
+      const interactive = state.explain || guessing;
+      if (interactive) {
+        row.setAttribute("role", "button");
+        row.tabIndex = 0;
+        row.setAttribute("aria-label",
+          (state.explain ? "Explain line " : "Line ") + lineNo + ": " + (text.trim() || "blank line"));
+        const activate = () => { if (state.explain) showNote(f, lineNo); else guessLine(lineNo, f.name); };
+        row.addEventListener("click", activate);
+        row.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
+        });
+      } else if (markText) {
+        row.setAttribute("aria-label", "Line " + lineNo + ": " + (text.trim() || "blank line") + " — " + markText);
+      }
       panel.appendChild(row);
     });
   }
@@ -144,7 +165,7 @@ function showNote(f, lineNo) {
 function hintBtn(stageKey) {
   const h = state.puzzle.training?.hints?.[stageKey];
   if (!h || (!state.prog.learn && !isScaffold())) return "";
-  return `<details class="hint-d"${isScaffold() ? " open" : ""}><summary>💡 Hint</summary><div>${mdLite(h)}</div></details>`;
+  return `<details class="hint-d"${isScaffold() ? " open" : ""}><summary>Hint</summary><div>${mdLite(h)}</div></details>`;
 }
 
 function renderStage(p, prog) {
@@ -156,22 +177,22 @@ function renderStage(p, prog) {
     const left = p.stages.line.maxGuesses - prog.lineGuesses.length;
     const dots = prog.lineGuesses.map((g) => SYM[g.result]).join("") || "—";
     const hintP = scaf
-      ? `👉 The bug is on the <strong>highlighted</strong> line. Tap it to confirm.`
-      : `Tap the line where the bug lives. 🟩 exact · 🟨 within ${p.stages.line.yellowRadius} lines · ⬜ cold.` +
+      ? `The bug is on the <strong>highlighted</strong> line. Tap it to confirm.`
+      : `Tap the line where the bug lives. Feedback: exact, near (within ${p.stages.line.yellowRadius} lines), or cold.` +
         (unlimited ? ` <em>Learn mode: unlimited guesses.</em>` : ` ${left} guess${left === 1 ? "" : "es"} left.`);
     el.innerHTML =
       `<h2>Stage 1 of 4 — Find the vulnerable line</h2>` +
       `<p class="hint">${hintP}</p>` +
       `<div class="guessdots">${dots}</div>` + hintBtn("line") +
       (prog.learn && !scaf ? `<button class="btn secondary sm" id="revealLine">Reveal the line</button>` : "");
-    const rb = $("revealLine"); if (rb) rb.addEventListener("click", () => { prog.stage = 2; persistAndRender(); });
+    const rb = $("revealLine"); if (rb) rb.addEventListener("click", () => { prog.stage = 2; announce("Line revealed. Stage 2 of 4: name the bug class."); persistAndRender(); });
   } else if (prog.stage === 2) {
     let classes = p.stages.bugClass.options;
     if (scaf) { const ai = classes.indexOf(p.stages.bugClass.answer); const [a, b] = twoPos(ai < 0 ? 0 : ai, seed); classes = [classes[a], classes[b]]; }
     const opts = classes.map((c) =>
       `<button class="opt${classStateClass(prog, c)}" data-class="${escapeHtml(c)}">${escapeHtml(TAX.classes[c]?.label || c)}</button>`).join("");
     el.innerHTML = `<h2>Stage 2 of 4 — Name the bug class</h2>` +
-      `<p class="hint">What kind of vulnerability is it?${scaf ? "" : " 🟨 = right family, wrong class."}</p>` +
+      `<p class="hint">What kind of vulnerability is it?${scaf ? "" : " A near miss means the right family but the wrong class."}</p>` +
       hintBtn("bugClass") + `<div class="options">${opts}</div>`;
     if (!prog.classResult) el.querySelectorAll(".opt").forEach((b) => b.addEventListener("click", () => guessClass(b.dataset.class)));
   } else if (prog.stage === 3) {
@@ -238,8 +259,9 @@ function guessLine(line, file) {
   if (sameFile && line === ans.line) result = "green";
   else if (sameFile && Math.abs(line - ans.line) <= ans.yellowRadius) result = "yellow";
   prog.lineGuesses.push({ line, file: f, result });
-  if (result === "green") { prog.lineSolved = true; prog.stage = 2; }
-  else if (!prog.learn && !isScaffold() && prog.lineGuesses.length >= ans.maxGuesses) { prog.stage = 2; }
+  if (result === "green") { prog.lineSolved = true; prog.stage = 2; announce("Exact. Stage 2 of 4: name the bug class."); }
+  else if (!prog.learn && !isScaffold() && prog.lineGuesses.length >= ans.maxGuesses) { prog.stage = 2; announce("Out of guesses. Stage 2 of 4: name the bug class."); }
+  else announce(result === "yellow" ? "Near — within a few lines. Try again." : "Cold. Try again.");
   persistAndRender();
 }
 function guessClass(c) {
@@ -247,6 +269,7 @@ function guessClass(c) {
   if (prog.classResult) return;
   prog.classPick = c; prog.puzzleAnswerClass = ans;
   prog.classResult = (c === ans) ? "green" : (TAX.classes[c]?.family && TAX.classes[c].family === TAX.classes[ans]?.family ? "yellow" : "grey");
+  announce((prog.classResult === "green" ? "Correct class." : prog.classResult === "yellow" ? "Right family, wrong class." : "Wrong class.") + " Stage 3 of 4: why is it exploitable?");
   prog.stage = 3; persistAndRender();
 }
 function guessWhy(i) {
@@ -254,6 +277,7 @@ function guessWhy(i) {
   if (prog.whyPick != null) return;
   prog.whyPick = i;
   prog.whyResult = (i === p.stages.why.answerIndex) ? "green" : "grey";
+  announce((prog.whyResult === "green" ? "Correct." : "Not quite.") + " Stage 4 of 4: pick the fix.");
   prog.stage = 4; persistAndRender();
 }
 function guessFix(i) {
@@ -263,6 +287,7 @@ function guessFix(i) {
   prog.fixResult = (i === p.stages.fix.answerIndex) ? "green" : "grey";
   prog.stage = 5; prog.completedAt = new Date().toISOString();
   if (state.diff !== "intro" && !prog.learn && !prog.usedLearn && state.date === localToday()) bumpStreak(state.date);
+  announce((prog.fixResult === "green" ? "Correct fix." : "Wrong fix.") + " Solved — scored " + stageScore(prog) + " of 4. See the breakdown below.");
   persistAndRender();
 }
 function persistAndRender() { saveProgress(progKey(), state.prog); render(); }
@@ -293,8 +318,20 @@ function shareText(p, prog) {
   const cap = p.difficulty[0].toUpperCase() + p.difficulty.slice(1);
   const score = stageScore(prog);
   return `SourceReadle ${p.id} · ${cap}\n` +
-    `${LANG_LABEL[p.language] || p.language} · ${score}/4${score === 4 ? " 🎯" : ""}` +
+    `${LANG_LABEL[p.language] || p.language} · ${score}/4` +
     (prog.learn ? " · learn" : "") + "\n\n" + shareGrid(prog);
+}
+// Words, not just colour — a text readout of each stage's result for the breakdown.
+function scorecardHtml(prog) {
+  const taps = prog.lineGuesses.length;
+  const row = (dt, text, result) => `<dt>${dt}</dt><dd class="r-${result}">${text}</dd>`;
+  const clsText = prog.classResult === "green" ? "Correct" : prog.classResult === "yellow" ? "Right family, wrong class" : "Wrong";
+  return `<dl class="scorecard">` +
+    row("Find", prog.lineSolved ? `Solved in ${taps} tap${taps === 1 ? "" : "s"}` : "Not found", prog.lineSolved ? "green" : "grey") +
+    row("Class", clsText, prog.classResult || "grey") +
+    row("Why", prog.whyResult === "green" ? "Correct" : "Wrong", prog.whyResult === "green" ? "green" : "grey") +
+    row("Fix", prog.fixResult === "green" ? "Correct" : "Wrong", prog.fixResult === "green" ? "green" : "grey") +
+    `</dl>`;
 }
 function renderResult(p, prog) {
   const el = $("resultPanel");
@@ -305,9 +342,10 @@ function renderResult(p, prog) {
   const rn = (p.writeup.readNext || []).map((r) => { const u = safeUrl(r.url); return u ? `<a href="${u}" target="_blank" rel="noopener">${escapeHtml(r.label)} ↗</a>` : ""; }).join("");
   const fixUrl = safeUrl(p.source.fixCommit), advUrl = safeUrl(p.source.advisory);
   el.innerHTML =
-    `<h2>${win ? "Clean sweep 🎉" : "Solved — the breakdown"}</h2>` +
+    `<h2>${win ? "Clean sweep" : "Solved — the breakdown"}</h2>` +
     `<div class="sharegrid">${escapeHtml(share)}</div>` +
-    `<div class="sharelegend">rows: 🔎 find&nbsp;·&nbsp;🏷️ class&nbsp;·&nbsp;💡 why&nbsp;·&nbsp;🔧 fix</div>` +
+    `<div class="sharelegend">rows, top to bottom: find&nbsp;·&nbsp;class&nbsp;·&nbsp;why&nbsp;·&nbsp;fix</div>` +
+    scorecardHtml(prog) +
     `<div class="row"><button class="btn" id="shareBtn">Share result</button></div>` +
     (p.training?.exploit ? `<div class="writeup"><h3>What the attack looks like</h3><p>${mdLite(p.training.exploit)}</p></div>` : "") +
     `<div class="writeup"><h3>Why it's vulnerable</h3><p>${mdLite(p.writeup.summary)}</p>` +
@@ -318,7 +356,7 @@ function renderResult(p, prog) {
   $("shareBtn").addEventListener("click", async () => {
     const text = share + "\n" + location.href;
     if (navigator.share) { try { await navigator.share({ text }); return; } catch {} }
-    try { await navigator.clipboard.writeText(text); $("shareBtn").textContent = "Copied ✓"; }
+    try { await navigator.clipboard.writeText(text); $("shareBtn").textContent = "Copied"; }
     catch { $("shareBtn").textContent = "Copy failed"; }
     setTimeout(() => { const b = $("shareBtn"); if (b) b.textContent = "Share result"; }, 1500);
   });
@@ -341,6 +379,16 @@ function render() {
   $("explainBtn").setAttribute("aria-pressed", state.explain ? "true" : "false");
   $("learnBtn").setAttribute("aria-pressed", state.prog.learn ? "true" : "false");
   if (!state.explain) { $("notePanel").classList.add("hidden"); state.selectedNote = null; }
+}
+
+// Mark the active difficulty tab and apply roving tabindex (only the selected
+// tab is in the tab order; arrows move between the rest).
+function setDiffTabs(active) {
+  document.querySelectorAll("#difftabs button").forEach((b) => {
+    const on = b.dataset.diff === active;
+    b.setAttribute("aria-selected", on ? "true" : "false");
+    b.tabIndex = on ? 0 : -1;
+  });
 }
 
 function fmtDate(d) { return new Date(d + "T00:00:00Z").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }); }
@@ -381,7 +429,7 @@ function populateLangs() {
 async function loadIntro() {
   const list = INDEX.intro || [];
   $("langSelect").style.display = "none";
-  document.querySelectorAll("#difftabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.diff === "intro" ? "true" : "false"));
+  setDiffTabs("intro");
   if (!list.length) {
     state.puzzle = null; $("meta").innerHTML = ""; $("stagePanel").innerHTML = ""; $("notePanel").classList.add("hidden"); $("resultPanel").classList.add("hidden");
     $("dateLabel").textContent = "Intro"; $("codePanel").className = "code";
@@ -410,7 +458,7 @@ async function load() {
   const pd = playableDates();
   if (!pd.includes(state.date)) state.date = pd.length ? pd[pd.length - 1] : null;
 
-  document.querySelectorAll("#difftabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.diff === state.diff ? "true" : "false"));
+  setDiffTabs(state.diff);
 
   if (!state.date) {
     $("meta").innerHTML = ""; $("stagePanel").innerHTML = ""; $("notePanel").classList.add("hidden"); $("resultPanel").classList.add("hidden");
@@ -446,16 +494,16 @@ const TUT_STEPS = [
   { title: "1 · Find the line", body:
     `<p>Tap the line of code where the vulnerability lives.</p>
      <div class="glyphs">🟩 🟨 ⬜</div>
-     <p class="muted">🟩 exact &nbsp;·&nbsp; 🟨 within a few lines &nbsp;·&nbsp; ⬜ cold. You get 5 taps.</p>` },
+     <p class="muted">Green is exact, yellow is within a few lines, grey is cold. You get 5 taps.</p>` },
   { title: "2 · Name the bug class", body:
     `<p>What <em>kind</em> of flaw is it — SQL injection, path traversal, use-after-free…?</p>
-     <p class="muted">🟨 means the right family but the wrong specific class.</p>` },
+     <p class="muted">A near miss means the right family but the wrong specific class.</p>` },
   { title: "3 · Why is it exploitable?", body:
     `<p>Pick the explanation of how an attacker actually abuses it.</p>
      <p class="muted">This is the part that makes you better — understand the mechanism, not just spot it.</p>` },
   { title: "4 · Pick the fix", body:
     `<p>One patch truly closes the hole; the others look right but don't.</p>
-     <p class="muted">Stuck? Tap <strong>🔍 Explain</strong> to see what any line does, or <strong>🎓 Learn</strong> for hints with no streak pressure. Tap <strong>?</strong> anytime to replay this.</p>` },
+     <p class="muted">Stuck? Tap <strong>Explain</strong> to see what any line does, or <strong>Learn</strong> for hints with no streak pressure. Tap <strong>?</strong> anytime to replay this.</p>` },
 ];
 function renderTut() {
   const s = TUT_STEPS[tutIndex];
@@ -538,7 +586,20 @@ function wireReport() {
 function wire() {
   wireTutorial();
   wireReport();
-  document.querySelectorAll("#difftabs button").forEach((b) => b.addEventListener("click", () => { state.diff = b.dataset.diff; load(); }));
+  const tabs = [...document.querySelectorAll("#difftabs button")];
+  tabs.forEach((b) => b.addEventListener("click", () => { state.diff = b.dataset.diff; load(); }));
+  // Arrow-key navigation within the tablist (ARIA roving-tabindex pattern).
+  $("difftabs").addEventListener("keydown", (e) => {
+    const i = tabs.findIndex((b) => b.dataset.diff === state.diff);
+    let j = i;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") j = (i + 1) % tabs.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") j = (i - 1 + tabs.length) % tabs.length;
+    else if (e.key === "Home") j = 0;
+    else if (e.key === "End") j = tabs.length - 1;
+    else return;
+    e.preventDefault();
+    state.diff = tabs[j].dataset.diff; tabs[j].focus(); load();
+  });
   $("prevDay").addEventListener("click", () => {
     if (state.diff === "intro") { if (state.introIndex > 0) { state.introIndex--; load(); } return; }
     const pd = playableDates(); const i = pd.indexOf(state.date); if (i > 0) { state.date = pd[i - 1]; load(); }
