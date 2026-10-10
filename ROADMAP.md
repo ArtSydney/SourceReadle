@@ -9,7 +9,7 @@ should read this file first, find **NOW / NEXT**, and continue. Update the
 ## Resume pointer
 
 - **NOW:** _nothing in progress_
-- **NEXT:** `T1.1` (Define the verification contract) — Phase 0 complete; see Phase 1 ⭐.
+- **NEXT:** `T1.2` (Per-language runner — Python + C) — see Phase 1 ⭐.
 - **Last updated:** 2026-10-10
 
 When you finish a task: tick its box, move the pointer to the next task, add a one-line
@@ -85,9 +85,8 @@ Small, self-contained, each ~one session. Do these first to build momentum and f
 
 Turn the biggest risk (wrong answer keys) into the biggest selling point. Needs **D2**.
 
-- [ ] **T1.1 — Define the verification contract.** Add optional `verify` block to the schema: how to build/run the snippet, a PoC that should SUCCEED (bug present) against the original, and that should FAIL against the correct fix (and still SUCCEED against each wrong fix).
-  - Steps: design `verify` schema (language, build cmd, poc, expected results per fix option); document in CONTRIBUTING.
-  - Accept: one hand-written example puzzle carries a complete, runnable `verify` block.
+- [x] **T1.1 — Define the verification contract.** ✅ Added an optional `verify` block to the schema: `image`/`build`/`run`, a `harness` (runnable PoC driver), and a `fixes` array index-aligned to `stages.fix.options` with the full patched files per option. Oracle = PoC exit code (0 = exploited). `validate.mjs` enforces the core contract (fixes aligned; exactly the correct fix expects `blocked`); documented in CONTRIBUTING; example in `puzzles/examples/verify-command-injection.json` (a non-served reference folder).
+  - Accept: ✅ the example carries a complete, runnable `verify` block — proven by actually executing it (original=exploited, correct fix=blocked, both wrong fixes=still exploited), and the validator catches a deliberately mismatched key.
 - [ ] **T1.2 — Per-language runner (start with Python + C).** A sandboxed runner (container in CI) that applies each fix option as a patch and runs the PoC, recording pass/fail.
   - Steps: `scripts/verify.mjs` + per-language Docker images; resource/time/network limits; output a verification report JSON.
   - Accept: running it on the T1.1 example proves: original=vuln, correct fix=blocked, each wrong fix=still vuln. Mismatch → non-zero exit.
@@ -157,3 +156,4 @@ Do **Phase 0** now (cheap, fixes the funnel). Then **Phase 1** (trust) because i
 - 2026-10-10 — T0.4 meaningful share grid shipped (Wordle-style journey grid + score/4; assets bumped to ?v=8).
 - 2026-10-10 — T0.5 accessibility & polish shipped (keyboard/ARIA/live region, roving tabs, focus ring, reduced-motion, colour-blind text cues) + emoji cleanup. Phase 0 complete. Assets bumped to ?v=9.
 - 2026-10-10 — UX fix: choice stages now reveal a clear verdict (right answer highlighted + plain-language banner) and wait for Continue instead of auto-advancing, so correct/wrong is obvious during play. Assets bumped to ?v=10.
+- 2026-10-10 — T1.1 verification contract defined: `verify` schema block + validator enforcement + CONTRIBUTING docs + a runnable example proven by execution. (No player/site change; examples/ folder is not served.)

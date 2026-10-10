@@ -1,0 +1,120 @@
+{
+  "id": "srd-0901",
+  "date": "2025-01-01",
+  "difficulty": "easy",
+  "language": "python",
+  "estimatedMinutes": 5,
+  "snippet": {
+    "files": [
+      {
+        "name": "countlines.py",
+        "code": "import subprocess\n\n\ndef count_lines(path):\n    # Count the lines in the file the user asked for.\n    result = subprocess.run(\n        \"wc -l \" + path,\n        shell=True,\n        capture_output=True,\n        text=True,\n    )\n    return result.stdout\n",
+        "notes": {
+          "1": "Imports Python's subprocess module for running external programs.",
+          "6": "Starts an external process to count lines in a file.",
+          "12": "Returns whatever the process printed to standard output."
+        }
+      }
+    ]
+  },
+  "stages": {
+    "line": { "file": "countlines.py", "line": 7, "yellowRadius": 2, "maxGuesses": 5 },
+    "bugClass": {
+      "answer": "command-inj",
+      "options": ["command-inj", "code-inj", "path-traversal", "sqli"]
+    },
+    "why": {
+      "prompt": "Why can an attacker who controls `path` run their own commands?",
+      "answerIndex": 0,
+      "options": [
+        { "label": "`shell=True` runs the whole string through `/bin/sh`, so shell metacharacters in `path` (like `|` or `;`) start commands the attacker chooses." },
+        { "label": "`wc` can be tricked into writing to arbitrary files through its output flags.", "whyWrong": "`wc` has no such flags; the flaw is that the input reaches a shell, not anything about `wc` itself." },
+        { "label": "The function leaks file contents because it returns `result.stdout`.", "whyWrong": "Returning stdout is fine on its own — the flaw is that attacker input is interpreted by the shell before `wc` ever runs." }
+      ]
+    },
+    "fix": {
+      "answerIndex": 0,
+      "options": [
+        {
+          "label": "Pass an argument list and drop the shell",
+          "diff": "-    result = subprocess.run(\"wc -l \" + path, shell=True, ...)\n+    result = subprocess.run([\"wc\", \"-l\", path], ...)"
+        },
+        {
+          "label": "Strip semicolons from the path first",
+          "diff": "+    path = path.replace(\";\", \"\")\n     result = subprocess.run(\"wc -l \" + path, shell=True, ...)",
+          "whyWrong": "Blacklisting one character is not enough — `|`, `&&`, backticks and `$(...)` still inject. The payload here uses `|` and sails straight through."
+        },
+        {
+          "label": "Reject paths that contain `..`",
+          "diff": "+    if \"..\" in path:\n+        raise ValueError(\"invalid path\")\n     result = subprocess.run(\"wc -l \" + path, shell=True, ...)",
+          "whyWrong": "That is a path-traversal check; it does nothing about shell metacharacters, so command injection still works."
+        }
+      ]
+    }
+  },
+  "source": {
+    "origin": "original",
+    "license": "MIT",
+    "attribution": "SourceReadle verification-contract example"
+  },
+  "training": {
+    "exploit": "Call `count_lines(\"/etc/hostname | echo PWNED\")`. With `shell=True` the string becomes the pipeline `wc -l /etc/hostname | echo PWNED`, so the attacker's `echo PWNED` runs and its output comes back from the function. Any command works in place of `echo`.",
+    "concepts": ["CWE-78", "OWASP A03:2021"],
+    "hints": {
+      "line": "Look for where user input becomes part of a string handed to the shell.",
+      "bugClass": "The input reaches an OS command interpreter, not an interpreter for the program's own language.",
+      "why": "Think about what `shell=True` does with characters like `|`.",
+      "fix": "The robust fix removes the shell entirely, so input can never be parsed as a command."
+    }
+  },
+  "writeup": {
+    "summary": "`subprocess.run(\"wc -l \" + path, shell=True)` concatenates attacker-controlled `path` into a string that `/bin/sh` parses, so metacharacters like `|` and `;` start new commands. Passing an argument list (`[\"wc\", \"-l\", path]`) with no shell makes `path` a single opaque argument that can never be interpreted as a command. Blacklisting `;` or checking for `..` leaves other shell syntax wide open.",
+    "readNext": [
+      { "label": "Python subprocess security considerations", "url": "https://docs.python.org/3/library/subprocess.html#security-considerations" },
+      { "label": "OWASP Command Injection", "url": "https://owasp.org/www-community/attacks/Command_Injection" }
+    ]
+  },
+  "verify": {
+    "version": 1,
+    "image": "python:3.12-slim",
+    "run": "python3 poc.py",
+    "timeoutSec": 10,
+    "network": false,
+    "harness": [
+      {
+        "name": "poc.py",
+        "code": "import sys\nfrom countlines import count_lines\n\n# A benign base path plus an injected command. If the input reaches a shell,\n# the `echo PWNED` runs and PWNED appears in the returned output.\n# '|' is used deliberately so that a naive 'strip semicolons' fix does NOT block it.\nPAYLOAD = \"/etc/hostname | echo PWNED\"\n\nout = count_lines(PAYLOAD)\n\n# Exit 0 == exploited (bug present); any non-zero == blocked.\nsys.exit(0 if \"PWNED\" in out else 1)\n"
+      }
+    ],
+    "original": { "expect": "exploited" },
+    "fixes": [
+      {
+        "expect": "blocked",
+        "files": [
+          {
+            "name": "countlines.py",
+            "code": "import subprocess\n\n\ndef count_lines(path):\n    # Count the lines in the file the user asked for.\n    result = subprocess.run(\n        [\"wc\", \"-l\", path],\n        capture_output=True,\n        text=True,\n    )\n    return result.stdout\n"
+          }
+        ]
+      },
+      {
+        "expect": "exploited",
+        "files": [
+          {
+            "name": "countlines.py",
+            "code": "import subprocess\n\n\ndef count_lines(path):\n    # Reject semicolons before running.\n    path = path.replace(\";\", \"\")\n    result = subprocess.run(\n        \"wc -l \" + path,\n        shell=True,\n        capture_output=True,\n        text=True,\n    )\n    return result.stdout\n"
+          }
+        ]
+      },
+      {
+        "expect": "exploited",
+        "files": [
+          {
+            "name": "countlines.py",
+            "code": "import subprocess\n\n\ndef count_lines(path):\n    # Block path traversal.\n    if \"..\" in path:\n        raise ValueError(\"invalid path\")\n    result = subprocess.run(\n        \"wc -l \" + path,\n        shell=True,\n        capture_output=True,\n        text=True,\n    )\n    return result.stdout\n"
+          }
+        ]
+      }
+    ]
+  }
+}

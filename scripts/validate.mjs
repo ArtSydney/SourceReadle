@@ -30,6 +30,18 @@ for (const date of readdirSync(puzzlesDir).sort()) {
     }
     continue;
   }
+  // 'examples' holds reference puzzles (e.g. the verification-contract demo) — not served, not rotated.
+  if (date === "examples") {
+    for (const f of readdirSync(join(puzzlesDir, "examples")).filter((x) => x.endsWith(".json")).sort()) {
+      count++;
+      let p;
+      try { p = JSON.parse(readFileSync(join(puzzlesDir, "examples", f), "utf8")); }
+      catch (e) { errors.push(`examples/${f}: invalid JSON — ${e.message}`); continue; }
+      const r = validatePuzzle(p, { seenIds });
+      errors.push(...r.errors); warnings.push(...r.warnings);
+    }
+    continue;
+  }
   if (!DATE_RE.test(date)) { errors.push(`Folder '${date}' is not a YYYY-MM-DD date.`); continue; }
   for (const diff of DIFFS) {
     const file = join(puzzlesDir, date, `${diff}.json`);

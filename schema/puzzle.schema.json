@@ -203,6 +203,64 @@
           }
         }
       }
+    },
+    "verify": {
+      "type": "object",
+      "description": "Optional execution contract (Phase 1). Lets a sandboxed runner prove the answer key by running a PoC against the original snippet and against every fix option. Convention: the PoC process EXIT CODE is the oracle — exit 0 means the vulnerability was successfully exploited; any non-zero exit (assertion, error, crash, timeout) counts as blocked.",
+      "required": ["version", "image", "run", "original", "fixes"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "integer", "const": 1 },
+        "image": { "type": "string", "description": "Container image the runner uses, e.g. 'python:3.12-slim' or 'gcc:13'." },
+        "build": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Shell commands run in the work dir before 'run' (compiling, etc.). Absent/empty for interpreted languages."
+        },
+        "run": { "type": "string", "description": "Shell command that runs the PoC. Exit 0 == exploited; any non-zero == blocked." },
+        "timeoutSec": { "type": "integer", "minimum": 1, "maximum": 60, "default": 10 },
+        "network": { "type": "boolean", "default": false, "description": "Whether the sandbox allows network. Keep false unless the PoC genuinely needs loopback." },
+        "harness": {
+          "type": "array",
+          "description": "Extra files written alongside the snippet to make it runnable (a PoC driver, a build file). Not shown to the player.",
+          "items": {
+            "type": "object",
+            "required": ["name", "code"],
+            "additionalProperties": false,
+            "properties": { "name": { "type": "string" }, "code": { "type": "string" } }
+          }
+        },
+        "original": {
+          "type": "object",
+          "description": "The baseline program = snippet.files + harness, with no fix applied. Must be exploitable.",
+          "required": ["expect"],
+          "additionalProperties": false,
+          "properties": { "expect": { "type": "string", "const": "exploited" } }
+        },
+        "fixes": {
+          "type": "array",
+          "description": "Index-aligned with stages.fix.options. For each option the runner overlays 'files' onto the baseline snippet (matched by file name), then runs the PoC. Exactly the correct fix (stages.fix.answerIndex) must expect 'blocked'; every other option must expect 'exploited'.",
+          "items": {
+            "type": "object",
+            "required": ["expect", "files"],
+            "additionalProperties": false,
+            "properties": {
+              "expect": { "type": "string", "enum": ["exploited", "blocked"] },
+              "files": {
+                "type": "array",
+                "minItems": 1,
+                "description": "Complete content of each file this fix changes relative to the baseline snippet (by name). Files not listed are taken from snippet.files unchanged.",
+                "items": {
+                  "type": "object",
+                  "required": ["name", "code"],
+                  "additionalProperties": false,
+                  "properties": { "name": { "type": "string" }, "code": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

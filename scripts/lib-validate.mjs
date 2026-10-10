@@ -104,5 +104,41 @@ export function validatePuzzle(p, ctx = {}) {
   for (const r of p.writeup?.readNext || []) if (!isHttps(r?.url)) fail(`writeup.readNext url '${r?.url}' must be https`);
 
   if (!p.writeup?.summary) fail("writeup.summary missing");
+
+  if (p.verify) validateVerify(p, fail, warn);
   return { errors, warnings };
+}
+
+// The execution contract (Phase 1). Validated structurally here; executed by the
+// runner (T1.2). The heart of it: fixes are index-aligned to stages.fix.options,
+// and exactly the correct fix must expect "blocked".
+function validateVerify(p, fail, warn) {
+  const v = p.verify;
+  if (v.version !== 1) fail("verify.version must be 1");
+  if (typeof v.image !== "string" || !v.image) fail("verify.image missing");
+  if (typeof v.run !== "string" || !v.run) fail("verify.run missing");
+  if (v.build && !Array.isArray(v.build)) fail("verify.build must be an array of strings");
+  if (v.timeoutSec != null && !(v.timeoutSec >= 1 && v.timeoutSec <= 60)) fail("verify.timeoutSec out of 1..60");
+  for (const h of v.harness || []) if (!h?.name || typeof h.code !== "string") fail("verify.harness entry missing name/code");
+  if (v.original?.expect !== "exploited") fail("verify.original.expect must be 'exploited'");
+
+  const fixOpts = p.stages?.fix?.options || [];
+  const fixes = v.fixes;
+  if (!Array.isArray(fixes)) { fail("verify.fixes must be an array"); return; }
+  if (fixes.length !== fixOpts.length) fail(`verify.fixes length ${fixes.length} != stages.fix.options length ${fixOpts.length}`);
+
+  const snippetNames = new Set((p.snippet?.files || []).map((f) => f.name));
+  let blocked = -1;
+  fixes.forEach((fx, i) => {
+    if (fx?.expect !== "exploited" && fx?.expect !== "blocked") fail(`verify.fixes[${i}].expect must be 'exploited' or 'blocked'`);
+    if (fx?.expect === "blocked") { if (blocked >= 0) fail("verify.fixes has more than one 'blocked'"); blocked = i; }
+    if (!Array.isArray(fx?.files) || fx.files.length === 0) fail(`verify.fixes[${i}].files must be a non-empty array`);
+    for (const f of fx?.files || []) {
+      if (!f?.name || typeof f.code !== "string") { fail(`verify.fixes[${i}] has a file missing name/code`); continue; }
+      if (!snippetNames.has(f.name)) warn(`verify.fixes[${i}] patches '${f.name}', which is not a snippet file`);
+    }
+  });
+  const ai = p.stages?.fix?.answerIndex;
+  if (blocked === -1) fail("verify.fixes must mark exactly one 'blocked'");
+  else if (blocked !== ai) fail(`verify: the 'blocked' fix is index ${blocked} but stages.fix.answerIndex is ${ai}`);
 }

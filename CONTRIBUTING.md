@@ -71,9 +71,47 @@ checks catch most mistakes, and only eyeball the ones that matter (Hard CVEs).
   should be the kind of patch a competent dev might actually propose and that
   *looks* like it works.
 
-## A note on the answer-key check
+## The verification contract (`verify` block)
 
-`validate.mjs` is structural. It cannot tell you the bug is *real* or that the
-"correct" fix truly works — only a human (or a future compile/run harness) can.
-That verification is the one job that stays manual, and it's why Hard puzzles get
-reviewed and Easy/Medium mostly don't.
+`validate.mjs` is structural — it can't tell you the bug is *real* or that the
+"correct" fix truly works. The optional **`verify`** block makes that claim
+*executable*: a sandboxed runner builds the snippet, runs a proof-of-concept
+against the original and against **every** fix option, and checks that reality
+matches the answer key. This is the Phase 1 trust mechanism; the runner itself is
+`T1.2`. A complete, runnable example lives in
+[`puzzles/examples/verify-command-injection.json`](puzzles/examples/verify-command-injection.json).
+
+**The oracle is the PoC's exit code:** `exit 0` means the vulnerability was
+successfully exploited; any non-zero exit (assertion, error, crash, timeout)
+counts as *blocked*. Write the PoC so it asserts the malicious effect and exits
+accordingly.
+
+The block:
+
+- `version` — always `1`.
+- `image` — the container image the runner uses (`python:3.12-slim`, `gcc:13`, …).
+- `build` — optional shell steps before running (compiling, etc.); omit for
+  interpreted languages.
+- `run` — the command that runs the PoC. Its exit code is the oracle.
+- `timeoutSec` (≤60), `network` (default `false` — keep it off unless the PoC
+  genuinely needs loopback).
+- `harness` — extra files (a PoC driver, a `Makefile`) written next to the snippet
+  to make it runnable. Not shown to the player.
+- `original: { expect: "exploited" }` — the baseline (`snippet.files` + `harness`,
+  no patch) must be exploitable.
+- `fixes` — **index-aligned with `stages.fix.options`.** For each option the
+  runner overlays its `files` onto the baseline snippet (matched by file name) and
+  re-runs the PoC. Each carries `expect: "blocked" | "exploited"` and the full
+  content of every file it changes. The contract (enforced by `validate.mjs`):
+  **exactly the correct fix (`stages.fix.answerIndex`) is `"blocked"`; every other
+  option is `"exploited"`.**
+
+**Design the PoC and the wrong fixes together.** The *same* PoC runs against all
+variants, so a wrong fix must stay exploitable by that one payload. In the example,
+the payload uses `|` precisely so the "strip semicolons" wrong fix can't
+accidentally block it — only the real fix (drop the shell) does. Prefer storing the
+full patched file per variant over fuzzy diff application, so the result is
+deterministic.
+
+A `verify` block is optional per puzzle, but it's what turns "trust us" into
+"run it yourself." Hard CVE puzzles are the priority to backfill (`T1.5`).
