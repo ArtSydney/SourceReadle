@@ -9,7 +9,7 @@ should read this file first, find **NOW / NEXT**, and continue. Update the
 ## Resume pointer
 
 - **NOW:** _nothing in progress_
-- **NEXT:** `T0.4` (Meaningful share grid) — see Phase 0.
+- **NEXT:** `T0.5` (Accessibility & polish pass) — see Phase 0.
 - **Last updated:** 2026-10-10
 
 When you finish a task: tick its box, move the pointer to the next task, add a one-line
@@ -75,7 +75,7 @@ Small, self-contained, each ~one session. Do these first to build momentum and f
 - [x] **T0.3 — Better feedback loop.** ✅ Report 👎 now opens a structured modal (which stage felt wrong, free-text details) that builds a prefilled, `player-report`-labeled GitHub issue with puzzle context + result glyphs auto-attached. Static-friendly (no backend); swap to a serverless endpoint later if D1 resolves.
   - Steps: replace the raw GitHub-issue link with a small form (prefilled issue body, or a serverless endpoint if D1 resolved); label issues `player-report`.
   - Accept: a report tells us the puzzle id, the stage, and the complaint without the player writing boilerplate.
-- [ ] **T0.4 — Meaningful share grid.** Redesign the share text so it encodes the *path* (e.g. number of line guesses, whether class was family-correct) in a way that's intriguing to non-players, like Wordle's grid.
+- [x] **T0.4 — Meaningful share grid.** ✅ Share text is now a solid 4-row square grid: row 1 is the line-search journey (one cell per tap, in order), rows 2–4 are the Class/Why/Fix verdicts centered in ⬛ bands so the block stays a rectangle. Header carries a `score/4` hook (🎯 on a clean sweep) + learn tag. On-screen legend maps the rows; ⬛ padding is distinct from a ⬜ cold miss. Mobile font shrinks so a 5-wide block fits with no overflow.
   - Steps: design the glyph language; implement in `shareText()`; keep it spoiler-free.
   - Accept: two different solves produce visibly different, interesting grids; posting one makes a non-player curious.
 - [ ] **T0.5 — Accessibility & polish pass.** Keyboard nav, focus states, ARIA on the stages, reduced-motion, color-contrast check for the green/yellow/grey feedback (color-blind safe: add symbols/patterns, not just color).
@@ -154,3 +154,4 @@ Do **Phase 0** now (cheap, fixes the funnel). Then **Phase 1** (trust) because i
 - 2026-10-10 — T0.1 first-run tutorial shipped (5-step overlay + "?" replay).
 - 2026-10-10 — T0.2 Intro tier shipped (5 guided scaffolded lessons + Intro tab).
 - 2026-10-10 — T0.3 structured feedback shipped (👎 report modal → prefilled, labeled GitHub issue; assets bumped to ?v=7).
+- 2026-10-10 — T0.4 meaningful share grid shipped (Wordle-style journey grid + score/4; assets bumped to ?v=8).

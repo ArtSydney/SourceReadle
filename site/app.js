@@ -268,14 +268,33 @@ function guessFix(i) {
 function persistAndRender() { saveProgress(progKey(), state.prog); render(); }
 
 // ---- result ----------------------------------------------------------------
-function shareText(p, prog) {
-  const line = prog.lineGuesses.map((g) => SYM[g.result]).join("") || "⬜";
+// Stages fully nailed (green), out of 4 — the headline "score" for sharing.
+function stageScore(prog) {
+  return (prog.lineSolved ? 1 : 0) + (prog.classResult === "green" ? 1 : 0) +
+    (prog.whyResult === "green" ? 1 : 0) + (prog.fixResult === "green" ? 1 : 0);
+}
+// A solid 4-row square grid, Wordle-style. Row 1 is the line-search journey
+// (one cell per tap, in order); rows 2-4 are the Class/Why/Fix verdicts,
+// each centered in a band of ⬛ "inactive" cells so the block stays a rectangle.
+// ⬛ padding is deliberately distinct from ⬜ (an actual cold miss).
+function shareGrid(prog) {
+  const taps = prog.lineGuesses.map((g) => SYM[g.result]);
+  if (!taps.length) taps.push("⬜");
+  const trimmed = taps.length > 6 ? taps.slice(-6) : taps;   // keep the block tidy
+  const W = trimmed.length;
+  const center = Math.floor((W - 1) / 2);
+  const band = (glyph) => Array.from({ length: W }, (_, i) => (i === center ? glyph : "⬛")).join("");
   const cls = SYM[prog.classResult] || "⬜";
   const why = prog.whyResult === "green" ? "🟩" : "🟥";
   const fix = prog.fixResult === "green" ? "🟩" : "🟥";
+  return [trimmed.join(""), band(cls), band(why), band(fix)].join("\n");
+}
+function shareText(p, prog) {
   const cap = p.difficulty[0].toUpperCase() + p.difficulty.slice(1);
-  return `SourceReadle ${p.id} · ${cap} (${LANG_LABEL[p.language] || p.language})\n` +
-    `Line  ${line}\nClass ${cls}\nWhy   ${why}\nFix   ${fix}` + (prog.learn ? "\n(learn mode)" : "");
+  const score = stageScore(prog);
+  return `SourceReadle ${p.id} · ${cap}\n` +
+    `${LANG_LABEL[p.language] || p.language} · ${score}/4${score === 4 ? " 🎯" : ""}` +
+    (prog.learn ? " · learn" : "") + "\n\n" + shareGrid(prog);
 }
 function renderResult(p, prog) {
   const el = $("resultPanel");
@@ -288,6 +307,7 @@ function renderResult(p, prog) {
   el.innerHTML =
     `<h2>${win ? "Clean sweep 🎉" : "Solved — the breakdown"}</h2>` +
     `<div class="sharegrid">${escapeHtml(share)}</div>` +
+    `<div class="sharelegend">rows: 🔎 find&nbsp;·&nbsp;🏷️ class&nbsp;·&nbsp;💡 why&nbsp;·&nbsp;🔧 fix</div>` +
     `<div class="row"><button class="btn" id="shareBtn">Share result</button></div>` +
     (p.training?.exploit ? `<div class="writeup"><h3>What the attack looks like</h3><p>${mdLite(p.training.exploit)}</p></div>` : "") +
     `<div class="writeup"><h3>Why it's vulnerable</h3><p>${mdLite(p.writeup.summary)}</p>` +
@@ -471,7 +491,7 @@ function reportWhere(p) {
 }
 function reportContext(p, prog) {
   const cap = p.difficulty[0].toUpperCase() + p.difficulty.slice(1);
-  let ctx = `Puzzle: ${p.id} — ${cap} (${LANG_LABEL[p.language] || p.language})\nWhere: ${reportWhere(p)}\nApp: v7`;
+  let ctx = `Puzzle: ${p.id} — ${cap} (${LANG_LABEL[p.language] || p.language})\nWhere: ${reportWhere(p)}\nApp: v8`;
   if (p.source && p.source.origin === "cve" && p.source.cve) ctx += `\nSource: ${p.source.cve}`;
   if (prog && prog.stage >= 5) ctx += `\n\n${shareText(p, prog)}`;
   return ctx;

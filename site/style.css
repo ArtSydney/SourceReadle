@@ -139,7 +139,8 @@ main { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
 .opt pre .add { color: var(--green); } .opt pre .del { color: #ef4444; }
 
 .result { margin-top: 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
-.sharegrid { font-family: var(--mono); white-space: pre; line-height: 1.5; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin: 10px 0; overflow-x: auto; }
+.sharegrid { font-family: var(--mono); white-space: pre; line-height: 1.4; letter-spacing: 2px; font-size: 18px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin: 10px 0 4px; overflow-x: auto; }
+.sharelegend { color: var(--muted); font-size: 11px; margin: 0 0 12px; }
 .btn { font: inherit; cursor: pointer; border: 0; background: var(--accent); color: #fff; border-radius: 10px; padding: 9px 16px; }
 .btn.secondary { background: var(--bg); color: var(--ink); border: 1px solid var(--border); }
 .writeup { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
@@ -186,6 +187,7 @@ code { font-family: var(--mono); background: rgba(127,127,127,0.15); padding: 1p
   .coderow .src { padding: 3px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
   .stage, .result, .note { padding: 13px; margin-top: 12px; }
+  .sharegrid { font-size: 14px; letter-spacing: 1px; }
   .stage h2 { font-size: 15px; }
   .stage .hint { font-size: 12.5px; }
   .guessdots { font-size: 20px; }
