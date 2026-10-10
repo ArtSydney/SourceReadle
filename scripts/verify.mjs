@@ -16,7 +16,7 @@
 //   node scripts/verify.mjs [puzzle.json ...]      # specific files, or
 //   node scripts/verify.mjs                        # every puzzle with a verify block
 //   node scripts/verify.mjs --report verify-report.json
-import { readFileSync, writeFileSync, readdirSync, mkdtempSync, rmSync, statSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, mkdtempSync, rmSync, statSync, existsSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -86,7 +86,16 @@ function dockerSh(image, cmd, dir, timeoutMs) {
 function runVariant(v, runner, fileMap) {
   const dir = mkdtempSync(join(tmpdir(), "srd-verify-"));
   try {
-    for (const [name, code] of Object.entries(fileMap)) writeFileSync(join(dir, name), code);
+    // The container may run as a different (even remapped) uid than the host user
+    // that wrote these files, so make the dir world-read/write/exec and the files
+    // world-readable — otherwise the PoC can't be read, and compilers can't write
+    // their output into /work.
+    chmodSync(dir, 0o777);
+    for (const [name, code] of Object.entries(fileMap)) {
+      const fp = join(dir, name);
+      writeFileSync(fp, code);
+      chmodSync(fp, 0o644);
+    }
     const timeoutMs = (v.timeoutSec || 10) * 1000;
     const build = (v.build || []).join(" && ");
     const exec = runner === "docker"
