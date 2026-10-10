@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SourceReadle</title>
   <meta name="description" content="A daily code-reading puzzle: find the vulnerability, name its class, pick the fix." />
-  <link rel="stylesheet" href="style.css?v=6" />
+  <link rel="stylesheet" href="style.css?v=7" />
 </head>
 <body>
   <header class="topbar">
@@ -53,6 +53,27 @@
     <a id="reportLink" href="#" target="_blank" rel="noopener">Report this puzzle 👎</a>
   </footer>
 
+  <div class="tut hidden" id="report" role="dialog" aria-modal="true" aria-label="Report this puzzle">
+    <div class="tut-card report-card">
+      <button class="tut-skip" id="reportClose" aria-label="Close">✕</button>
+      <h3 class="report-title">Report this puzzle 👎</h3>
+      <p class="report-sub">What felt off? This opens a prefilled GitHub issue — nothing is sent automatically.</p>
+      <div class="report-field">
+        <label>Which part seemed wrong?</label>
+        <div class="report-chips" id="reportStages"></div>
+      </div>
+      <div class="report-field">
+        <label for="reportText">Details (optional)</label>
+        <textarea id="reportText" rows="4" placeholder="e.g. the marked fix doesn't actually close the bug, or the line should be 7 not 6…"></textarea>
+      </div>
+      <p class="report-ctx" id="reportCtx"></p>
+      <div class="tut-nav report-nav">
+        <button class="btn secondary" id="reportCancel">Cancel</button>
+        <button class="btn" id="reportSubmit">Open GitHub issue ↗</button>
+      </div>
+    </div>
+  </div>
+
   <div class="tut hidden" id="tutorial" role="dialog" aria-modal="true" aria-label="How to play">
     <div class="tut-card">
       <button class="tut-skip" id="tutSkip">Skip</button>
@@ -65,6 +86,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>

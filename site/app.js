@@ -89,7 +89,8 @@ function renderMeta(p) {
   $("meta").innerHTML =
     `<span class="pill">${escapeHtml(LANG_LABEL[p.language] || p.language)}</span>` +
     `<span class="pill">~${p.estimatedMinutes || "?"} min</span>` + src;
-  $("reportLink").href = `https://github.com/ArtSydney/SourceReadle/issues/new?title=${encodeURIComponent("Puzzle issue: " + p.id)}&body=${encodeURIComponent("Puzzle: " + p.id + "\n\nWhat's wrong:")}`;
+  // The report link opens a structured modal (wired in wireReport); keep href inert.
+  $("reportLink").setAttribute("href", "#");
 }
 
 // ---- code ------------------------------------------------------------------
@@ -454,8 +455,69 @@ function wireTutorial() {
 }
 function maybeShowTutorial() { let seen; try { seen = localStorage.getItem(TKEY); } catch {} if (!seen) openTutorial(); }
 
+// ---- report ----------------------------------------------------------------
+const REPO = "ArtSydney/SourceReadle";
+const REPORT_STAGES = [
+  ["line", "Finding the line"],
+  ["bugClass", "Naming the bug class"],
+  ["why", "Why it's exploitable"],
+  ["fix", "Picking the fix"],
+  ["code", "The code / snippet itself"],
+  ["other", "Something else"],
+];
+let reportStage = null;
+function reportWhere(p) {
+  return state.diff === "intro" ? `Intro · Lesson ${state.introIndex + 1}` : `${p.date} · ${p.difficulty}`;
+}
+function reportContext(p, prog) {
+  const cap = p.difficulty[0].toUpperCase() + p.difficulty.slice(1);
+  let ctx = `Puzzle: ${p.id} — ${cap} (${LANG_LABEL[p.language] || p.language})\nWhere: ${reportWhere(p)}\nApp: v7`;
+  if (p.source && p.source.origin === "cve" && p.source.cve) ctx += `\nSource: ${p.source.cve}`;
+  if (prog && prog.stage >= 5) ctx += `\n\n${shareText(p, prog)}`;
+  return ctx;
+}
+function renderReportChips() {
+  $("reportStages").innerHTML = REPORT_STAGES
+    .map(([k, label]) => `<button type="button" data-k="${k}" aria-pressed="${reportStage === k}">${label}</button>`)
+    .join("");
+  $("reportStages").querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => { reportStage = b.dataset.k; renderReportChips(); }));
+}
+function openReport() {
+  if (!state.puzzle) return;
+  reportStage = null;
+  renderReportChips();
+  $("reportText").value = "";
+  $("reportCtx").textContent = reportContext(state.puzzle, state.prog);
+  $("report").classList.remove("hidden");
+}
+function closeReport() { $("report").classList.add("hidden"); }
+function submitReport() {
+  const p = state.puzzle; if (!p) return;
+  const stageLabel = (REPORT_STAGES.find(([k]) => k === reportStage) || [, "Unspecified"])[1];
+  const details = $("reportText").value.trim();
+  const body =
+    `**Which part seemed wrong:** ${stageLabel}\n\n` +
+    `**Details:**\n${details || "_(none provided)_"}\n\n` +
+    `---\n\`\`\`\n${reportContext(p, state.prog)}\n\`\`\`\n`;
+  const url = `https://github.com/${REPO}/issues/new` +
+    `?labels=${encodeURIComponent("player-report")}` +
+    `&title=${encodeURIComponent(`Puzzle report: ${p.id} — ${stageLabel}`)}` +
+    `&body=${encodeURIComponent(body)}`;
+  window.open(url, "_blank", "noopener");
+  closeReport();
+}
+function wireReport() {
+  $("reportLink").addEventListener("click", (e) => { e.preventDefault(); openReport(); });
+  $("reportClose").addEventListener("click", closeReport);
+  $("reportCancel").addEventListener("click", closeReport);
+  $("reportSubmit").addEventListener("click", submitReport);
+  document.addEventListener("keydown", (e) => { if (!$("report").classList.contains("hidden") && e.key === "Escape") closeReport(); });
+}
+
 function wire() {
   wireTutorial();
+  wireReport();
   document.querySelectorAll("#difftabs button").forEach((b) => b.addEventListener("click", () => { state.diff = b.dataset.diff; load(); }));
   $("prevDay").addEventListener("click", () => {
     if (state.diff === "intro") { if (state.introIndex > 0) { state.introIndex--; load(); } return; }

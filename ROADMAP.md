@@ -9,7 +9,7 @@ should read this file first, find **NOW / NEXT**, and continue. Update the
 ## Resume pointer
 
 - **NOW:** _nothing in progress_
-- **NEXT:** `T0.3` (Structured feedback / better 👎 report) — see Phase 0.
+- **NEXT:** `T0.4` (Meaningful share grid) — see Phase 0.
 - **Last updated:** 2026-10-10
 
 When you finish a task: tick its box, move the pointer to the next task, add a one-line
@@ -72,7 +72,7 @@ Small, self-contained, each ~one session. Do these first to build momentum and f
 
 - [x] **T0.1 — First-run tutorial.** ✅ Done. 5-step overlay (welcome + the 4 stages) shown on first load, gated on `localStorage` `sourcereadle:tutorial:v1`; "?" button in the header replays it; Back/Next/Skip/Esc; mobile-tested. Files: `site/index.html`, `site/style.css`, `site/app.js` (wireTutorial/openTutorial/maybeShowTutorial).
 - [x] **T0.2 — Intro tier (below Easy).** ✅ Done. Separate guided 5-lesson set (`puzzles/intro/intro-1..5.json`, `difficulty:"intro"`, `scaffold:true`). "Intro" tab enters a lesson-navigator mode (date nav → "Lesson N/5", language selector hidden). Scaffolding: the vulnerable line is pre-highlighted (pulsing), unlimited taps, only 2 options per choice stage (answer + one distractor, index-preserving), hints shown open. Does **not** affect the daily streak; progress keyed `intro/<index>`. Schema adds `difficulty:"intro"` + `scaffold`; `lib-validate` relaxes option minimums for scaffold puzzles; `build-site` copies `puzzles/intro/` → `_site/intro/` and lists them in `index.json.intro`; validator handles the non-dated `intro/` folder. Tested full solve + navigation + Intro↔daily toggle on desktop & mobile.
-- [ ] **T0.3 — Better feedback loop.** Make the 👎 report capture structured data (which stage felt wrong, free text) and land somewhere actionable.
+- [x] **T0.3 — Better feedback loop.** ✅ Report 👎 now opens a structured modal (which stage felt wrong, free-text details) that builds a prefilled, `player-report`-labeled GitHub issue with puzzle context + result glyphs auto-attached. Static-friendly (no backend); swap to a serverless endpoint later if D1 resolves.
   - Steps: replace the raw GitHub-issue link with a small form (prefilled issue body, or a serverless endpoint if D1 resolved); label issues `player-report`.
   - Accept: a report tells us the puzzle id, the stage, and the complaint without the player writing boilerplate.
 - [ ] **T0.4 — Meaningful share grid.** Redesign the share text so it encodes the *path* (e.g. number of line guesses, whether class was family-correct) in a way that's intriguing to non-players, like Wordle's grid.
@@ -153,3 +153,4 @@ Do **Phase 0** now (cheap, fixes the funnel). Then **Phase 1** (trust) because i
 - 2026-10-10 — Roadmap created.
 - 2026-10-10 — T0.1 first-run tutorial shipped (5-step overlay + "?" replay).
 - 2026-10-10 — T0.2 Intro tier shipped (5 guided scaffolded lessons + Intro tab).
+- 2026-10-10 — T0.3 structured feedback shipped (👎 report modal → prefilled, labeled GitHub issue; assets bumped to ?v=7).

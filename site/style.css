@@ -49,6 +49,19 @@ body {
 .tut-dots { display: flex; gap: 6px; }
 .tut-dots .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
 .tut-dots .dot.on { background: var(--accent); }
+.report-card { max-width: 460px; padding: 22px 20px 16px; }
+.report-title { margin: 0 2px 4px; font-size: 18px; }
+.report-sub { margin: 0 2px 14px; font-size: 13px; color: var(--muted); }
+.report-field { margin-bottom: 14px; }
+.report-field > label { display: block; font-size: 13px; font-weight: 600; margin: 0 2px 7px; }
+.report-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.report-chips button { font: inherit; font-size: 13px; cursor: pointer; border: 1px solid var(--border); background: var(--bg); color: var(--ink); border-radius: 999px; padding: 6px 12px; }
+.report-chips button:hover { border-color: var(--accent); }
+.report-chips button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+#reportText { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; resize: vertical; border: 1px solid var(--border); background: var(--bg); color: var(--ink); border-radius: 10px; padding: 9px 11px; }
+#reportText:focus { outline: none; border-color: var(--accent); }
+.report-ctx { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: pre-wrap; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 0 0 4px; }
+.report-nav { justify-content: flex-end; }
 
 .controls {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
