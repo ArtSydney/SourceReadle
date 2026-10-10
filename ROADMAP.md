@@ -9,7 +9,7 @@ should read this file first, find **NOW / NEXT**, and continue. Update the
 ## Resume pointer
 
 - **NOW:** _nothing in progress_
-- **NEXT:** `T1.2` (Per-language runner — Python + C) — see Phase 1 ⭐.
+- **NEXT:** `T1.3` (Gate generation on verification) — see Phase 1 ⭐.
 - **Last updated:** 2026-10-10
 
 When you finish a task: tick its box, move the pointer to the next task, add a one-line
@@ -87,9 +87,8 @@ Turn the biggest risk (wrong answer keys) into the biggest selling point. Needs 
 
 - [x] **T1.1 — Define the verification contract.** ✅ Added an optional `verify` block to the schema: `image`/`build`/`run`, a `harness` (runnable PoC driver), and a `fixes` array index-aligned to `stages.fix.options` with the full patched files per option. Oracle = PoC exit code (0 = exploited). `validate.mjs` enforces the core contract (fixes aligned; exactly the correct fix expects `blocked`); documented in CONTRIBUTING; example in `puzzles/examples/verify-command-injection.json` (a non-served reference folder).
   - Accept: ✅ the example carries a complete, runnable `verify` block — proven by actually executing it (original=exploited, correct fix=blocked, both wrong fixes=still exploited), and the validator catches a deliberately mismatched key.
-- [ ] **T1.2 — Per-language runner (start with Python + C).** A sandboxed runner (container in CI) that applies each fix option as a patch and runs the PoC, recording pass/fail.
-  - Steps: `scripts/verify.mjs` + per-language Docker images; resource/time/network limits; output a verification report JSON.
-  - Accept: running it on the T1.1 example proves: original=vuln, correct fix=blocked, each wrong fix=still vuln. Mismatch → non-zero exit.
+- [x] **T1.2 — Per-language runner.** ✅ `scripts/verify.mjs` materializes each variant (snippet + harness, with per-fix overlays) and builds+runs the PoC, with two backends: **Docker** (hardened — per-puzzle `image`, `--network=none`, `--cap-drop=ALL`, `no-new-privileges`, memory/pids/cpu limits, in-container `timeout`) and an unsandboxed **local** fallback for dev; auto-selects Docker when its daemon is up. Writes `verify-report.json`; exits non-zero on any mismatch. Language-agnostic via the exit-code oracle (works for Python + C today). CI workflow `.github/workflows/verify.yml` runs it in Docker on every change to `puzzles/`/`schema/`. `npm run verify`.
+  - Accept: ✅ on the T1.1 example it proves original=vuln, correct fix=blocked, each wrong fix=still vuln (exit 0); a sabotaged "correct" fix is caught by execution → non-zero exit.
 - [ ] **T1.3 — Gate generation on verification.** `generate-backlog.mjs` discards any drafted puzzle whose answer key doesn't verify by execution (where a `verify` block is producible), not just structurally.
   - Accept: an auto-generated puzzle with a wrong "correct" fix is rejected automatically.
 - [ ] **T1.4 — "Verified by execution" badge.** Surface verification status in the player and in `index.json`.
@@ -157,3 +156,4 @@ Do **Phase 0** now (cheap, fixes the funnel). Then **Phase 1** (trust) because i
 - 2026-10-10 — T0.5 accessibility & polish shipped (keyboard/ARIA/live region, roving tabs, focus ring, reduced-motion, colour-blind text cues) + emoji cleanup. Phase 0 complete. Assets bumped to ?v=9.
 - 2026-10-10 — UX fix: choice stages now reveal a clear verdict (right answer highlighted + plain-language banner) and wait for Continue instead of auto-advancing, so correct/wrong is obvious during play. Assets bumped to ?v=10.
 - 2026-10-10 — T1.1 verification contract defined: `verify` schema block + validator enforcement + CONTRIBUTING docs + a runnable example proven by execution. (No player/site change; examples/ folder is not served.)
+- 2026-10-10 — T1.2 execution runner shipped: `scripts/verify.mjs` (Docker + local backends, resource/time/network limits, JSON report, non-zero on mismatch) + `verify.yml` CI + `npm run verify`.

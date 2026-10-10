@@ -1,0 +1,49 @@
+name: Verify answer keys
+
+# Execution-verifies every puzzle that carries a `verify` block: runs the PoC
+# against the original and each fix option inside a hardened container and checks
+# that reality matches the answer key (original=vuln, correct fix=blocked, each
+# wrong fix=still vuln). Fails the build on any mismatch. See CONTRIBUTING.md.
+
+on:
+  push:
+    paths:
+      - "puzzles/**"
+      - "schema/**"
+      - "scripts/verify.mjs"
+      - "scripts/lib-validate.mjs"
+      - ".github/workflows/verify.yml"
+  pull_request:
+    paths:
+      - "puzzles/**"
+      - "schema/**"
+      - "scripts/verify.mjs"
+      - "scripts/lib-validate.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest   # Docker is preinstalled on GitHub-hosted runners
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Verify by execution (Docker sandbox)
+        run: node scripts/verify.mjs --runner docker --report verify-report.json
+
+      - name: Upload verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-report
+          path: verify-report.json
+          if-no-files-found: ignore

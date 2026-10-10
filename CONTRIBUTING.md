@@ -77,9 +77,17 @@ checks catch most mistakes, and only eyeball the ones that matter (Hard CVEs).
 "correct" fix truly works. The optional **`verify`** block makes that claim
 *executable*: a sandboxed runner builds the snippet, runs a proof-of-concept
 against the original and against **every** fix option, and checks that reality
-matches the answer key. This is the Phase 1 trust mechanism; the runner itself is
-`T1.2`. A complete, runnable example lives in
+matches the answer key. This is the Phase 1 trust mechanism. A complete, runnable
+example lives in
 [`puzzles/examples/verify-command-injection.json`](puzzles/examples/verify-command-injection.json).
+
+Run it with `npm run verify` (all puzzles with a `verify` block) or
+`node scripts/verify.mjs <file.json>`. It uses Docker when the daemon is up
+(`--runner docker`, per-puzzle `image`, `--network=none`, dropped capabilities,
+memory/pids/cpu limits, in-container timeout) and falls back to an **unsandboxed**
+local run for dev (`--runner local`). It writes `verify-report.json` and exits
+non-zero on any mismatch. CI runs it in Docker on every change to `puzzles/` or
+`schema/` (`.github/workflows/verify.yml`).
 
 **The oracle is the PoC's exit code:** `exit 0` means the vulnerability was
 successfully exploited; any non-zero exit (assertion, error, crash, timeout)
