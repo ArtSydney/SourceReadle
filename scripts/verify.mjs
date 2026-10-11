@@ -21,11 +21,12 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 // ---- args ------------------------------------------------------------------
 const argv = process.argv.slice(2);
-let runnerArg = "auto", reportPath = join(root, "verify-report.json");
+let runnerArg = "auto", reportPath = join(root, "verify-report.json"), stamp = false;
 const files = [];
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === "--runner") runnerArg = argv[++i];
   else if (argv[i] === "--report") reportPath = argv[++i];
+  else if (argv[i] === "--stamp") stamp = true;        // write verified:true on pass, strip on fail
   else files.push(argv[i]);
 }
 
@@ -61,6 +62,12 @@ const results = [];
 for (const { file, p } of picked) {
   const r = runVerification(p, { runner });
   r.file = file.replace(root + "/", "");
+  // Keep the `verified` stamp honest: set it on a clean pass, remove it otherwise.
+  if (stamp) {
+    const fresh = JSON.parse(readFileSync(file, "utf8"));
+    if (r.ok) fresh.verified = true; else delete fresh.verified;
+    writeFileSync(file, JSON.stringify(fresh, null, 2) + "\n");
+  }
   results.push(r);
 }
 

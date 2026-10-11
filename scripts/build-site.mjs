@@ -95,11 +95,12 @@ const windowStart = (() => {
 const end = addDays(cutoff, lead);
 const dates = [];
 const byDate = {};                                   // date -> { diff: language }
-let count = 0;
+const verifiedByDate = {};                           // date -> { diff: true } for execution-verified puzzles
+let count = 0, verifiedCount = 0;
 
 for (let d = windowStart; d <= end; d = addDays(d, 1)) {
   const dayIndex = daysBetween(START, d);          // stable across window changes
-  const langs = {};
+  const langs = {}, vlangs = {};
   for (const diff of DIFFS) {
     let obj = authored[`${d}/${diff}`];
     if (!obj && rotate) {
@@ -109,18 +110,23 @@ for (let d = windowStart; d <= end; d = addDays(d, 1)) {
     if (!obj) continue;
     const served = JSON.parse(JSON.stringify(obj));  // clone
     served.date = d;                                 // the date it plays on
+    delete served.verify;                            // author-time data; players only need the `verified` flag
     mkdirSync(join(out, "puzzles", d), { recursive: true });
     writeFileSync(join(out, "puzzles", d, `${diff}.json`), JSON.stringify(served, null, 2));
     langs[diff] = served.language;
+    if (served.verified === true) { vlangs[diff] = true; verifiedCount++; }
     count++;
   }
-  if (Object.keys(langs).length) { dates.push(d); byDate[d] = langs; }
+  if (Object.keys(langs).length) {
+    dates.push(d); byDate[d] = langs;
+    if (Object.keys(vlangs).length) verifiedByDate[d] = vlangs;
+  }
 }
 
 writeFileSync(join(out, "index.json"), JSON.stringify({
   generated: new Date().toISOString(),
   cutoff, lead, published: end, rotation: rotate, launch: START,
-  dates, byDate, count, intro,
+  dates, byDate, verifiedByDate, count, verifiedCount, intro,
 }, null, 2));
 
 console.log(`Built _site/ (cutoff ${cutoff}, rotation ${rotate ? "on" : "off"}): ${dates.length} day(s), ${count} puzzle(s).`);

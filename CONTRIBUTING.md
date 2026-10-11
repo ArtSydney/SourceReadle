@@ -132,3 +132,11 @@ never shipped, not merely structurally checked. Run generation with `SRD_VERIFY=
 regardless of the flag, *any* draft that already carries a verify block is always
 execution-gated. Verify blocks are only requested for languages the runner can
 execute (`python`, `javascript`, `ruby`, `php`, `go`, `c`, `cpp`).
+
+**The "verified" stamp.** A puzzle that passes gets `"verified": true` written
+into it — by the generation gate, or by `node scripts/verify.mjs <file> --stamp`
+for hand-authored ones (stamp sets it on a pass, strips it on a fail, so it never
+lies). The build surfaces it: served puzzles keep the `verified` flag (but the
+`verify` block itself is stripped — it's author-time data), and `index.json` gets
+`verifiedByDate`/`verifiedCount`. The player shows a green "✓ Verified" badge and a
+"✓ Verified only" filter. So the trust claim is visible to players, end to end.

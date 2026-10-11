@@ -108,5 +108,60 @@
         "url": "https://owasp.org/www-community/attacks/Command_Injection"
       }
     ]
-  }
+  },
+  "verify": {
+    "version": 1,
+    "image": "python:3.12-slim",
+    "run": "python3 poc.py",
+    "timeoutSec": 10,
+    "network": false,
+    "harness": [
+      {
+        "name": "poc.py",
+        "code": "import os, sys\nimport backup\n\nMARKER = \"/tmp/pwned\"\n# Classic command-injection payloads. If any reaches a shell, touch creates the\n# marker file. '|' defeats a ';' denylist; the quoted variant breaks out of\n# hand-added quotes; all are stopped only by dropping the shell (argv list).\nPAYLOADS = [\n    \"x | touch /tmp/pwned\",\n    \"x' | touch /tmp/pwned | '\",\n    \"x$(touch /tmp/pwned)\",\n]\n\n\ndef exploited(payload):\n    try:\n        if os.path.exists(MARKER):\n            os.remove(MARKER)\n    except OSError:\n        pass\n    try:\n        backup.backup_site(payload)\n    except Exception:\n        pass\n    return os.path.exists(MARKER)\n\n\nsys.exit(0 if any(exploited(p) for p in PAYLOADS) else 1)\n"
+      }
+    ],
+    "original": {
+      "expect": "exploited"
+    },
+    "fixes": [
+      {
+        "expect": "exploited",
+        "files": [
+          {
+            "name": "backup.py",
+            "code": "import os\n\ndef backup_site(hostname):\n    # Ping the host, then rsync its web root into local backups.\n    os.system(\"ping -c 1 '\" + hostname + \"'\")\n    cmd = \"rsync -az %s:/var/www/ ./backups/%s/\" % (hostname, hostname)\n    os.system(cmd)\n    return \"./backups/\" + hostname\n\ndef handle_request(form):\n    host = form.get(\"host\")\n    return backup_site(host)\n"
+          }
+        ]
+      },
+      {
+        "expect": "exploited",
+        "files": [
+          {
+            "name": "backup.py",
+            "code": "import os\n\ndef backup_site(hostname):\n    # Ping the host, then rsync its web root into local backups.\n    hostname = hostname.replace(\";\", \"\")\n    os.system(\"ping -c 1 \" + hostname)\n    cmd = \"rsync -az %s:/var/www/ ./backups/%s/\" % (hostname, hostname)\n    os.system(cmd)\n    return \"./backups/\" + hostname\n\ndef handle_request(form):\n    host = form.get(\"host\")\n    return backup_site(host)\n"
+          }
+        ]
+      },
+      {
+        "expect": "blocked",
+        "files": [
+          {
+            "name": "backup.py",
+            "code": "import subprocess\n\ndef backup_site(hostname):\n    # Ping the host, then rsync its web root into local backups.\n    subprocess.run([\"ping\", \"-c\", \"1\", hostname], check=True)\n    subprocess.run([\"rsync\", \"-az\", f\"{hostname}:/var/www/\", f\"./backups/{hostname}/\"], check=True)\n    return \"./backups/\" + hostname\n\ndef handle_request(form):\n    host = form.get(\"host\")\n    return backup_site(host)\n"
+          }
+        ]
+      },
+      {
+        "expect": "exploited",
+        "files": [
+          {
+            "name": "backup.py",
+            "code": "import os\n\ndef backup_site(hostname):\n    # Ping the host, then rsync its web root into local backups.\n    os.system(\"sudo -u nobody ping -c 1 \" + hostname)\n    cmd = \"rsync -az %s:/var/www/ ./backups/%s/\" % (hostname, hostname)\n    os.system(cmd)\n    return \"./backups/\" + hostname\n\ndef handle_request(form):\n    host = form.get(\"host\")\n    return backup_site(host)\n"
+          }
+        ]
+      }
+    ]
+  },
+  "verified": true
 }

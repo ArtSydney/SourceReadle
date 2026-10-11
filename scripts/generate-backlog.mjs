@@ -86,6 +86,7 @@ for (let i = 1; i <= buffer; i++) {
             console.error(`  ${date}/${diff} attempt ${attempt} FAILED execution-verification: ${bad.variant} (${bad.role}) expected ${bad.expect}, got ${bad.got}`);
             continue;
           }
+          obj.verified = true;                            // proven by execution
           console.log(`  ✓ execution-verified ${obj.id}`);
         }
         mkdirSync(dirname(target), { recursive: true });

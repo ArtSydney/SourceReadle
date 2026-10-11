@@ -91,6 +91,7 @@ main { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
 .meta { color: var(--muted); font-size: 12px; margin: 4px 0 14px; display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
 .pill { border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; background: var(--panel); }
 .pill.cve { border-color: var(--accent); color: var(--accent); font-family: var(--mono); font-size: 11px; }
+.pill.verified { border-color: var(--green); color: var(--green); font-weight: 600; }
 
 .code {
   background: var(--codebg); color: var(--codeink); border-radius: 12px;

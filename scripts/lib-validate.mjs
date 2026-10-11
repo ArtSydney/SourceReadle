@@ -106,6 +106,7 @@ export function validatePuzzle(p, ctx = {}) {
   if (!p.writeup?.summary) fail("writeup.summary missing");
 
   if (p.verify) validateVerify(p, fail, warn);
+  if (p.verified === true && !p.verify) fail("verified:true requires a verify block");
   return { errors, warnings };
 }
 

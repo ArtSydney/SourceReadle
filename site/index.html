@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SourceReadle</title>
   <meta name="description" content="A daily code-reading puzzle: find the vulnerability, name its class, pick the fix." />
-  <link rel="stylesheet" href="style.css?v=10" />
+  <link rel="stylesheet" href="style.css?v=11" />
 </head>
 <body>
   <header class="topbar">
@@ -31,6 +31,7 @@
     </div>
     <div class="modes">
       <select id="langSelect" class="lang" title="Filter by language" aria-label="Filter by language"></select>
+      <button id="verifiedBtn" class="toggle" aria-pressed="false" title="Show only puzzles whose answer key was proven by running it">✓ Verified only</button>
       <button id="explainBtn" class="toggle" aria-pressed="false" title="Tap any line to see what it does">Explain</button>
       <button id="learnBtn" class="toggle" aria-pressed="false" title="Unlimited guesses + hints, no streak">Learn</button>
     </div>
@@ -88,6 +89,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=10"></script>
+  <script src="app.js?v=11"></script>
 </body>
 </html>

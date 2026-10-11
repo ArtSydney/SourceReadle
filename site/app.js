@@ -6,7 +6,7 @@ let TAX = null;
 const puzzleCache = new Map();
 
 const STAGES = ["line", "bugClass", "why", "fix"]; // ordered; stage index 1..4, 5 = done
-const state = { date: null, diff: "easy", puzzle: null, prog: null, explain: false, selectedNote: null, lang: "", introIndex: 0 };
+const state = { date: null, diff: "easy", puzzle: null, prog: null, explain: false, selectedNote: null, lang: "", introIndex: 0, verifiedOnly: false };
 
 const $ = (id) => document.getElementById(id);
 // Push a short message to the polite live region for screen-reader feedback.
@@ -88,9 +88,11 @@ function renderMeta(p) {
     ? `<span class="pill cve">${escapeHtml(p.source.cve)}</span>` +
       (p.source.project ? `<span class="pill">${escapeHtml(p.source.project)}</span>` : "")
     : "";
+  const verified = p.verified
+    ? `<span class="pill verified" title="Answer key proven by running it: the correct fix blocks a real exploit; the wrong ones don't.">✓ Verified</span>` : "";
   $("meta").innerHTML =
     `<span class="pill">${escapeHtml(LANG_LABEL[p.language] || p.language)}</span>` +
-    `<span class="pill">~${p.estimatedMinutes || "?"} min</span>` + src;
+    `<span class="pill">~${p.estimatedMinutes || "?"} min</span>` + verified + src;
   // The report link opens a structured modal (wired in wireReport); keep href inert.
   $("reportLink").setAttribute("href", "#");
 }
@@ -439,6 +441,11 @@ function fmtDate(d) { return new Date(d + "T00:00:00Z").toLocaleDateString(undef
 const LANGKEY = "sourcereadle:lang:v1";
 function getLangPref() { try { return localStorage.getItem(LANGKEY) || ""; } catch { return ""; } }
 function setLangPref(v) { try { v ? localStorage.setItem(LANGKEY, v) : localStorage.removeItem(LANGKEY); } catch {} }
+// "Verified by execution" filter: show only puzzles whose answer key was proven by running it.
+const VFKEY = "sourcereadle:verifiedonly:v1";
+function verifiedOnlyPref() { try { return localStorage.getItem(VFKEY) === "1"; } catch { return false; } }
+function setVerifiedOnly(v) { try { v ? localStorage.setItem(VFKEY, "1") : localStorage.removeItem(VFKEY); } catch {} }
+function isVerified(date, diff) { return !!(INDEX.verifiedByDate && INDEX.verifiedByDate[date] && INDEX.verifiedByDate[date][diff]); }
 
 function localToday() { const n = new Date(); const p = (x) => String(x).padStart(2, "0"); return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())}`; }
 // Latest published date not past the viewer's own local date — so nobody plays ahead.
@@ -446,7 +453,9 @@ function maxPlayable() { const t = localToday(); const le = INDEX.dates.filter((
 // Dates the viewer may open, honoring the language filter for the current difficulty.
 function playableDates() {
   const max = maxPlayable();
-  return INDEX.dates.filter((d) => d <= max && (!state.lang || (INDEX.byDate[d] && INDEX.byDate[d][state.diff] === state.lang)));
+  return INDEX.dates.filter((d) => d <= max
+    && (!state.lang || (INDEX.byDate[d] && INDEX.byDate[d][state.diff] === state.lang))
+    && (!state.verifiedOnly || isVerified(d, state.diff)));
 }
 function resolveDate(prefer) {
   const pd = playableDates();
@@ -460,7 +469,7 @@ function resolveDate(prefer) {
 function populateLangs() {
   const max = maxPlayable();
   const langs = new Set();
-  for (const d of INDEX.dates) { if (d > max) continue; const m = INDEX.byDate[d]; if (m && m[state.diff]) langs.add(m[state.diff]); }
+  for (const d of INDEX.dates) { if (d > max) continue; if (state.verifiedOnly && !isVerified(d, state.diff)) continue; const m = INDEX.byDate[d]; if (m && m[state.diff]) langs.add(m[state.diff]); }
   const list = [...langs].sort();
   if (state.lang && !list.includes(state.lang)) state.lang = "";
   $("langSelect").innerHTML = `<option value="">All languages</option>` +
@@ -471,6 +480,7 @@ function populateLangs() {
 async function loadIntro() {
   const list = INDEX.intro || [];
   $("langSelect").style.display = "none";
+  $("verifiedBtn").style.display = "none";
   setDiffTabs("intro");
   if (!list.length) {
     state.puzzle = null; $("meta").innerHTML = ""; $("stagePanel").innerHTML = ""; $("notePanel").classList.add("hidden"); $("resultPanel").classList.add("hidden");
@@ -496,6 +506,7 @@ async function loadIntro() {
 async function load() {
   if (state.diff === "intro") return loadIntro();
   $("langSelect").style.display = "";
+  $("verifiedBtn").style.display = "";
   populateLangs();
   const pd = playableDates();
   if (!pd.includes(state.date)) state.date = pd.length ? pd[pd.length - 1] : null;
@@ -506,7 +517,10 @@ async function load() {
     $("meta").innerHTML = ""; $("stagePanel").innerHTML = ""; $("notePanel").classList.add("hidden"); $("resultPanel").classList.add("hidden");
     $("dateLabel").textContent = "—";
     $("codePanel").className = "code";
-    $("codePanel").innerHTML = `<div class="filename">No ${LANG_LABEL[state.lang] || state.lang} puzzles at this difficulty yet — try another language or difficulty.</div>`;
+    const langPhrase = state.lang ? `${LANG_LABEL[state.lang] || state.lang} ` : "";
+    $("codePanel").innerHTML = state.verifiedOnly
+      ? `<div class="filename">No execution-verified ${langPhrase}puzzles at this difficulty yet — turn off "Verified only", or try another difficulty.</div>`
+      : `<div class="filename">No ${langPhrase}puzzles at this difficulty yet — try another language or difficulty.</div>`;
     $("prevDay").disabled = $("nextDay").disabled = true;
     return;
   }
@@ -581,7 +595,7 @@ function reportWhere(p) {
 }
 function reportContext(p, prog) {
   const cap = p.difficulty[0].toUpperCase() + p.difficulty.slice(1);
-  let ctx = `Puzzle: ${p.id} — ${cap} (${LANG_LABEL[p.language] || p.language})\nWhere: ${reportWhere(p)}\nApp: v8`;
+  let ctx = `Puzzle: ${p.id} — ${cap} (${LANG_LABEL[p.language] || p.language})\nWhere: ${reportWhere(p)}\nApp: v11`;
   if (p.source && p.source.origin === "cve" && p.source.cve) ctx += `\nSource: ${p.source.cve}`;
   if (prog && prog.stage >= 5) ctx += `\n\n${shareText(p, prog)}`;
   return ctx;
@@ -651,6 +665,12 @@ function wire() {
     const pd = playableDates(); const i = pd.indexOf(state.date); if (i >= 0 && i < pd.length - 1) { state.date = pd[i + 1]; load(); }
   });
   $("langSelect").addEventListener("change", () => { state.lang = $("langSelect").value; setLangPref(state.lang); state.date = resolveDate(state.date); load(); });
+  $("verifiedBtn").addEventListener("click", () => {
+    state.verifiedOnly = !state.verifiedOnly; setVerifiedOnly(state.verifiedOnly);
+    $("verifiedBtn").setAttribute("aria-pressed", state.verifiedOnly ? "true" : "false");
+    if (state.diff !== "intro") state.date = resolveDate(state.date);
+    load();
+  });
   $("explainBtn").addEventListener("click", () => { state.explain = !state.explain; if (!state.explain) $("notePanel").classList.add("hidden"); render(); });
   $("learnBtn").addEventListener("click", () => {
     const now = !state.prog.learn; setLearn(now); state.prog.learn = now;
@@ -665,7 +685,10 @@ async function main() {
   TAX = { classes: tax.classes, families: tax.families };
   if (!INDEX.dates || INDEX.dates.length === 0) { $("codePanel").innerHTML = `<div class="filename">No puzzles published yet — check back on launch day.</div>`; return; }
   state.lang = getLangPref();
+  state.verifiedOnly = verifiedOnlyPref();
+  $("verifiedBtn").setAttribute("aria-pressed", state.verifiedOnly ? "true" : "false");
   state.date = resolveDate(maxPlayable());
+  if (!state.date && state.verifiedOnly) { state.verifiedOnly = false; setVerifiedOnly(false); $("verifiedBtn").setAttribute("aria-pressed", "false"); state.date = resolveDate(maxPlayable()); }  // nothing verified yet -> don't strand on empty
   if (!state.date) { state.lang = ""; setLangPref(""); state.date = resolveDate(maxPlayable()); }  // bad pref -> reset
   wire();
   await load();

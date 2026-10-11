@@ -9,7 +9,7 @@ should read this file first, find **NOW / NEXT**, and continue. Update the
 ## Resume pointer
 
 - **NOW:** _nothing in progress_
-- **NEXT:** `T1.4` ("Verified by execution" badge) — see Phase 1 ⭐.
+- **NEXT:** `T1.5` (Backfill verify blocks for existing CVE hard puzzles) — see Phase 1 ⭐.
 - **Last updated:** 2026-10-10
 
 When you finish a task: tick its box, move the pointer to the next task, add a one-line
@@ -91,8 +91,8 @@ Turn the biggest risk (wrong answer keys) into the biggest selling point. Needs 
   - Accept: ✅ on the T1.1 example it proves original=vuln, correct fix=blocked, each wrong fix=still vuln (exit 0); a sabotaged "correct" fix is caught by execution → non-zero exit.
 - [x] **T1.3 — Gate generation on verification.** ✅ Refactored the engine into `lib-verify.mjs` (reusable; `verify.mjs` is now a thin CLI). `generate-backlog.mjs` runs execution verification on any draft that carries a `verify` block and **discards** it if the answer key doesn't hold up — a mislabeled "correct" fix is rejected, not shipped. `SRD_VERIFY=1` asks the model for verify blocks (runnable languages only, via `VERIFY_IMAGES`) and enforces the gate; added as a `generate.yml` input. Documented in CONTRIBUTING.
   - Accept: ✅ demonstrated — a draft whose "correct" fix still uses the shell is auto-discarded (`fix#0/correct: expected blocked, got exploited`), while a sound draft is kept.
-- [ ] **T1.4 — "Verified by execution" badge.** Surface verification status in the player and in `index.json`.
-  - Accept: verified puzzles show a badge; the player can filter to verified-only.
+- [x] **T1.4 — "Verified by execution" badge.** ✅ Added a `verified` flag to the schema, stamped by the generation gate and by `verify.mjs --stamp`. `build-site` surfaces it in `index.json` (`verifiedByDate`, `verifiedCount`) and keeps the per-puzzle flag on served files (stripping the heavy `verify` block, which is author-time only). Player shows a green "✓ Verified" badge in the meta and a persisted "✓ Verified only" filter (graceful empty state, hidden in Intro). Proved the whole chain by adding a real, passing verify block to `srd-0004` (today-ish easy) so the badge/filter light up with genuine content. Assets → `?v=11`.
+  - Accept: ✅ verified puzzles show the badge; the filter narrows to verified-only (and empties cleanly where nothing is verified yet).
 - [ ] **T1.5 — Backfill.** Add `verify` blocks + run verification for the existing CVE hard puzzles (Heartbleed, Shellshock, GHOST, Log4Shell, Baron Samedit, Struts2, PHPMailer, nginx, Text4Shell, php-cgi).
   - Accept: each either passes verification or is flagged for manual correction.
 
@@ -158,3 +158,4 @@ Do **Phase 0** now (cheap, fixes the funnel). Then **Phase 1** (trust) because i
 - 2026-10-10 — T1.1 verification contract defined: `verify` schema block + validator enforcement + CONTRIBUTING docs + a runnable example proven by execution. (No player/site change; examples/ folder is not served.)
 - 2026-10-10 — T1.2 execution runner shipped: `scripts/verify.mjs` (Docker + local backends, resource/time/network limits, JSON report, non-zero on mismatch) + `verify.yml` CI + `npm run verify`.
 - 2026-10-12 — T1.3 generation gated on verification: engine extracted to `lib-verify.mjs`; `generate-backlog.mjs` discards drafts whose `verify` answer key fails execution; `SRD_VERIFY` opt-in requests verify blocks for runnable languages.
+- 2026-10-12 — T1.4 "Verified by execution" surfaced: `verified` schema flag + `verify.mjs --stamp`; `index.json` verifiedByDate/verifiedCount; player badge + "Verified only" filter; srd-0004 given a real passing verify block. Assets → ?v=11.
