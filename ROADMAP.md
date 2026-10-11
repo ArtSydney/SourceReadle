@@ -9,7 +9,7 @@ should read this file first, find **NOW / NEXT**, and continue. Update the
 ## Resume pointer
 
 - **NOW:** _nothing in progress_
-- **NEXT:** `T1.3` (Gate generation on verification) — see Phase 1 ⭐.
+- **NEXT:** `T1.4` ("Verified by execution" badge) — see Phase 1 ⭐.
 - **Last updated:** 2026-10-10
 
 When you finish a task: tick its box, move the pointer to the next task, add a one-line
@@ -89,8 +89,8 @@ Turn the biggest risk (wrong answer keys) into the biggest selling point. Needs 
   - Accept: ✅ the example carries a complete, runnable `verify` block — proven by actually executing it (original=exploited, correct fix=blocked, both wrong fixes=still exploited), and the validator catches a deliberately mismatched key.
 - [x] **T1.2 — Per-language runner.** ✅ `scripts/verify.mjs` materializes each variant (snippet + harness, with per-fix overlays) and builds+runs the PoC, with two backends: **Docker** (hardened — per-puzzle `image`, `--network=none`, `--cap-drop=ALL`, `no-new-privileges`, memory/pids/cpu limits, in-container `timeout`) and an unsandboxed **local** fallback for dev; auto-selects Docker when its daemon is up. Writes `verify-report.json`; exits non-zero on any mismatch. Language-agnostic via the exit-code oracle (works for Python + C today). CI workflow `.github/workflows/verify.yml` runs it in Docker on every change to `puzzles/`/`schema/`. `npm run verify`.
   - Accept: ✅ on the T1.1 example it proves original=vuln, correct fix=blocked, each wrong fix=still vuln (exit 0); a sabotaged "correct" fix is caught by execution → non-zero exit.
-- [ ] **T1.3 — Gate generation on verification.** `generate-backlog.mjs` discards any drafted puzzle whose answer key doesn't verify by execution (where a `verify` block is producible), not just structurally.
-  - Accept: an auto-generated puzzle with a wrong "correct" fix is rejected automatically.
+- [x] **T1.3 — Gate generation on verification.** ✅ Refactored the engine into `lib-verify.mjs` (reusable; `verify.mjs` is now a thin CLI). `generate-backlog.mjs` runs execution verification on any draft that carries a `verify` block and **discards** it if the answer key doesn't hold up — a mislabeled "correct" fix is rejected, not shipped. `SRD_VERIFY=1` asks the model for verify blocks (runnable languages only, via `VERIFY_IMAGES`) and enforces the gate; added as a `generate.yml` input. Documented in CONTRIBUTING.
+  - Accept: ✅ demonstrated — a draft whose "correct" fix still uses the shell is auto-discarded (`fix#0/correct: expected blocked, got exploited`), while a sound draft is kept.
 - [ ] **T1.4 — "Verified by execution" badge.** Surface verification status in the player and in `index.json`.
   - Accept: verified puzzles show a badge; the player can filter to verified-only.
 - [ ] **T1.5 — Backfill.** Add `verify` blocks + run verification for the existing CVE hard puzzles (Heartbleed, Shellshock, GHOST, Log4Shell, Baron Samedit, Struts2, PHPMailer, nginx, Text4Shell, php-cgi).
@@ -157,3 +157,4 @@ Do **Phase 0** now (cheap, fixes the funnel). Then **Phase 1** (trust) because i
 - 2026-10-10 — UX fix: choice stages now reveal a clear verdict (right answer highlighted + plain-language banner) and wait for Continue instead of auto-advancing, so correct/wrong is obvious during play. Assets bumped to ?v=10.
 - 2026-10-10 — T1.1 verification contract defined: `verify` schema block + validator enforcement + CONTRIBUTING docs + a runnable example proven by execution. (No player/site change; examples/ folder is not served.)
 - 2026-10-10 — T1.2 execution runner shipped: `scripts/verify.mjs` (Docker + local backends, resource/time/network limits, JSON report, non-zero on mismatch) + `verify.yml` CI + `npm run verify`.
+- 2026-10-12 — T1.3 generation gated on verification: engine extracted to `lib-verify.mjs`; `generate-backlog.mjs` discards drafts whose `verify` answer key fails execution; `SRD_VERIFY` opt-in requests verify blocks for runnable languages.

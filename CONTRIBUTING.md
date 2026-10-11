@@ -123,3 +123,12 @@ deterministic.
 
 A `verify` block is optional per puzzle, but it's what turns "trust us" into
 "run it yourself." Hard CVE puzzles are the priority to backfill (`T1.5`).
+
+**Generation is gated on it.** `generate-backlog.mjs` discards any draft whose
+`verify` block doesn't pass execution — a wrong "correct" fix (one that doesn't
+actually block the PoC) or a wrong fix that accidentally blocks it is rejected and
+never shipped, not merely structurally checked. Run generation with `SRD_VERIFY=1`
+(and Docker available) to ask the model for verify blocks and enforce this;
+regardless of the flag, *any* draft that already carries a verify block is always
+execution-gated. Verify blocks are only requested for languages the runner can
+execute (`python`, `javascript`, `ruby`, `php`, `go`, `c`, `cpp`).

@@ -16,7 +16,34 @@ const GUIDE = {
   hard: { lang: "c, cpp or java", mins: 30, origin: "code simplified from a real, well-known CVE you are confident about" },
 };
 
-export function buildPrompt(diff, idNum, date, avoid = {}) {
+// Images the verifier knows how to run, per language. Only these languages can
+// carry a generated verify block.
+export const VERIFY_IMAGES = {
+  python: "python:3.12-slim",
+  javascript: "node:20-slim",
+  ruby: "ruby:3.3-slim",
+  php: "php:8.3-cli",
+  go: "golang:1.22",
+  c: "gcc:13",
+  cpp: "gcc:13",
+};
+
+function verifySection() {
+  const map = Object.entries(VERIFY_IMAGES).map(([l, i]) => `${l} -> ${i}`).join(", ");
+  return `
+VERIFICATION (required): also include a top-level "verify" block that PROVES the answer key by execution.
+- The PoC process EXIT CODE is the oracle: exit 0 == the vulnerability was exploited; any non-zero == blocked. Write the PoC so it asserts the malicious effect and exits accordingly.
+- "version": 1.
+- "image": the image for the language you chose, from: ${map}.
+- "build": array of shell commands if compilation is needed (e.g. C: ["gcc -O0 -o poc *.c"]); omit for interpreted languages. "run": command to run the PoC (e.g. "python3 poc.py" or "./poc").
+- "timeoutSec": 10. "network": false.
+- "harness": array of {name, code} extra files — the PoC driver that imports/calls the snippet. Each "code" is an ARRAY of line strings (no embedded newlines), exactly like the snippet.
+- "original": {"expect":"exploited"} — the snippet as-is MUST be exploitable by the PoC.
+- "fixes": an array index-aligned with stages.fix.options. For EACH option give {"expect":"blocked"|"exploited","files":[{name, code(ARRAY of lines)}]} = the COMPLETE patched content of every snippet file that option changes. The correct fix (stages.fix.answerIndex) MUST be "blocked"; every other option MUST be "exploited".
+- The SAME PoC runs against all variants, so design the wrong fixes to stay exploitable by that one payload (e.g. use a metacharacter a naive denylist wouldn't strip). Keep the harness tiny, deterministic, offline, and self-contained.`;
+}
+
+export function buildPrompt(diff, idNum, date, avoid = {}, wantVerify = false) {
   const g = GUIDE[diff];
   const av = [];
   if (avoid.classes?.length) av.push(`- Do NOT use these bug classes (already used elsewhere today): ${avoid.classes.join(", ")}.`);
@@ -49,7 +76,7 @@ Requirements for THIS puzzle:
 - Pick a vulnerability class you have not already been asked about recently; vary languages and classes.
 
 Keep it tight so the JSON stays complete: the snippet file is at most 35 lines, at most ~12 notes, each fix "diff" at most ~8 lines, and each label/explanation one or two sentences.
-
+${wantVerify ? verifySection() : ""}
 Output STRICTLY valid JSON. Because code and diffs are arrays of line strings, no string in your output should contain a raw newline. Return only the JSON object.`;
 }
 
@@ -77,7 +104,7 @@ function scrubDeep(x) {
 }
 
 // Returns a puzzle object (id/date/difficulty are forced regardless of model output).
-export async function draftOne({ diff, idNum, date, key, model, fake, catalog, avoid }) {
+export async function draftOne({ diff, idNum, date, key, model, fake, catalog, avoid, wantVerify = false }) {
   let obj;
   if (fake) {
     // Clone a same-difficulty catalog entry; valid by construction. Testing only.
@@ -88,7 +115,7 @@ export async function draftOne({ diff, idNum, date, key, model, fake, catalog, a
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model, max_tokens: diff === "hard" ? 32000 : 12000, messages: [{ role: "user", content: buildPrompt(diff, idNum, date, avoid) }] }),
+      body: JSON.stringify({ model, max_tokens: diff === "hard" ? 32000 : 12000, messages: [{ role: "user", content: buildPrompt(diff, idNum, date, avoid, wantVerify) }] }),
     });
     if (!res.ok) throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data = await res.json();
@@ -100,6 +127,10 @@ export async function draftOne({ diff, idNum, date, key, model, fake, catalog, a
   // join them into the newline strings the schema and player expect.
   for (const f of obj?.snippet?.files || []) if (Array.isArray(f.code)) f.code = f.code.join("\n");
   for (const o of obj?.stages?.fix?.options || []) if (Array.isArray(o.diff)) o.diff = o.diff.join("\n");
+  if (obj?.verify) {                                 // join the verify block's array-of-lines code, too
+    for (const h of obj.verify.harness || []) if (Array.isArray(h.code)) h.code = h.code.join("\n");
+    for (const fx of obj.verify.fixes || []) for (const f of fx.files || []) if (Array.isArray(f.code)) f.code = f.code.join("\n");
+  }
   obj = scrubDeep(obj);                              // defuse any secret-shaped strings
   obj.id = `srd-${String(idNum).padStart(4, "0")}`;
   obj.date = date;

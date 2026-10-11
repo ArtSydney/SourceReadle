@@ -15,7 +15,8 @@ import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync } from 
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validatePuzzle, DIFFS } from "./lib-validate.mjs";
-import { draftOne } from "./lib-gen.mjs";
+import { draftOne, VERIFY_IMAGES } from "./lib-gen.mjs";
+import { runVerification, resolveRunner } from "./lib-verify.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const puzzlesSrc = join(root, "puzzles");
@@ -25,6 +26,11 @@ const maxNew = parseInt(process.env.SRD_MAX_NEW || "0", 10);   // 0 = unlimited;
 const model = process.env.SRD_MODEL || "claude-sonnet-5-5";
 const key = process.env.ANTHROPIC_API_KEY;
 const fake = process.env.SRD_FAKE === "1" || !key;
+// SRD_VERIFY=1 asks the model for a `verify` block (runnable languages only) and
+// gates on execution. Independently, ANY draft that carries a verify block is
+// always execution-gated. The runner is picked once (Docker in CI, else local).
+const wantVerify = process.env.SRD_VERIFY === "1";
+const vrunner = resolveRunner(process.env.SRD_VERIFY_RUNNER || "auto");
 
 if (fake && !process.env.SRD_FAKE) {
   console.log("ANTHROPIC_API_KEY not set — skipping generation (rotation will cover days).");
@@ -66,9 +72,22 @@ for (let i = 1; i <= buffer; i++) {
     for (let attempt = 1; attempt <= 2 && !ok; attempt++) {
       const idNum = nextId + 1;
       try {
-        const obj = await draftOne({ diff, idNum, date, key, model, fake, catalog, avoid });
+        const obj = await draftOne({ diff, idNum, date, key, model, fake, catalog, avoid, wantVerify });
         const { errors } = validatePuzzle(obj, { date, diff, seenIds: new Set(seenIds) });
         if (errors.length) { console.error(`  ${date}/${diff} attempt ${attempt} invalid: ${errors[0]}`); continue; }
+        // Trust gate: any draft with a verify block must prove its answer key by
+        // execution (original exploited, correct fix blocked, wrong fixes still
+        // exploited). A draft that doesn't verify is discarded, not shipped.
+        if (obj.verify) {
+          if (!VERIFY_IMAGES[obj.language]) { console.error(`  ${date}/${diff} attempt ${attempt} discarded: verify block for unrunnable language '${obj.language}'`); continue; }
+          const vr = runVerification(obj, { runner: vrunner });
+          if (!vr.ok) {
+            const bad = vr.variants.find((x) => !x.pass);
+            console.error(`  ${date}/${diff} attempt ${attempt} FAILED execution-verification: ${bad.variant} (${bad.role}) expected ${bad.expect}, got ${bad.got}`);
+            continue;
+          }
+          console.log(`  ✓ execution-verified ${obj.id}`);
+        }
         mkdirSync(dirname(target), { recursive: true });
         writeFileSync(target, JSON.stringify(obj, null, 2) + "\n");
         seenIds.add(obj.id); catalog[diff].push(obj); nextId = idNum; created++; ok = true;
