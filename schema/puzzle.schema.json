@@ -29,6 +29,10 @@
       "type": "boolean",
       "description": "True when this puzzle's answer key was proven by execution (its `verify` block passed). Set by the runner (`verify.mjs --stamp`) or the generation gate; surfaced to players as a 'Verified by execution' badge. Never hand-set true without a passing `verify` block."
     },
+    "verifyExempt": {
+      "type": "string",
+      "description": "Set when the answer key has been reviewed but cannot be proven by a self-contained offline execution harness — e.g. the snippet is an excerpt of a larger system, exploitation needs the network or a specific vulnerable build, or more than one offered fix blocks the exploit so the single-correct-fix contract doesn't apply. The value is the human-readable reason. Mutually exclusive with `verified: true` and a `verify` block."
+    },
     "language": {
       "type": "string",
       "enum": ["python", "csharp", "c", "cpp", "javascript", "go", "java", "ruby", "php", "rust"]

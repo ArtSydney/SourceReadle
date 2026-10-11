@@ -123,5 +123,6 @@
         "url": "https://www.rfc-editor.org/rfc/rfc6520"
       }
     ]
-  }
+  },
+  "verifyExempt": "Excerpt of OpenSSL's TLS heartbeat handler; triggering the out-of-bounds read needs a full TLS handshake against a vulnerable OpenSSL build, not reproducible in a self-contained offline harness. Answer key reviewed against the upstream fix."
 }

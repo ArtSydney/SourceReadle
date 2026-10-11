@@ -140,3 +140,17 @@ lies). The build surfaces it: served puzzles keep the `verified` flag (but the
 `verify` block itself is stripped — it's author-time data), and `index.json` gets
 `verifiedByDate`/`verifiedCount`. The player shows a green "✓ Verified" badge and a
 "✓ Verified only" filter. So the trust claim is visible to players, end to end.
+
+**When a puzzle can't be auto-verified (`verifyExempt`).** Most CVE "hard"
+puzzles are faithful *excerpts* of large systems (OpenSSL's TLS handler, Log4j's
+JNDI lookup, Struts' OGNL path). Exploiting them needs the real library, the
+network, or a specific vulnerable build — not reproducible in a self-contained
+offline harness — and some have more than one fix that technically blocks the
+exploit, so the single-correct-fix contract doesn't fit. Those carry
+`"verifyExempt": "<reason>"`: the key was reviewed against the upstream fix but is
+not machine-proven. It's mutually exclusive with `verify`/`verified`. `validate.mjs`
+prints a tally (verified / exempt / unmarked). A fragment-style snippet that *is*
+self-contained can still be verified by having the harness carry a complete
+runnable form (see `srd-0042`: the snippet is a body fragment, the harness compiles
+a full `target.c`, and the oversized copy crashes — so a non-zero exit means
+exploited).

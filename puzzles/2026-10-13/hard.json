@@ -111,5 +111,6 @@
         "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-3156"
       }
     ]
-  }
+  },
+  "verifyExempt": "Excerpt of sudo's argument parsing; the heap overflow needs a vulnerable setuid sudo build run with crafted argv, not reproducible from the excerpt. Answer key reviewed against the upstream fix."
 }

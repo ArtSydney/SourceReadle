@@ -111,5 +111,6 @@
         "url": "https://logging.apache.org/log4j/2.x/security.html"
       }
     ]
-  }
+  },
+  "verifyExempt": "Exploitation requires Log4j2's JNDI lookup reaching an attacker-controlled LDAP/RMI server over the network; infeasible under the offline (--network=none) sandbox. Answer key reviewed against the upstream fix."
 }

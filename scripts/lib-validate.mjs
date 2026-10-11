@@ -107,6 +107,7 @@ export function validatePuzzle(p, ctx = {}) {
 
   if (p.verify) validateVerify(p, fail, warn);
   if (p.verified === true && !p.verify) fail("verified:true requires a verify block");
+  if (p.verifyExempt && (p.verify || p.verified === true)) fail("verifyExempt cannot coexist with a verify block or verified:true");
   return { errors, warnings };
 }
 

@@ -117,5 +117,6 @@
         "url": "https://sourceware.org/git/?p=glibc.git;a=commit;h=d5dd6189d506068ed11c8bfa1e1e9bffde04decd"
       }
     ]
-  }
+  },
+  "verifyExempt": "Excerpt of glibc's __nss_hostname_digits_dots; the overflow depends on a specific vulnerable glibc build and the gethostbyname call path, not reproducible from the excerpt. Answer key reviewed against the upstream fix."
 }

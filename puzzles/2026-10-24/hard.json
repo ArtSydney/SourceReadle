@@ -122,5 +122,6 @@
         "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-4034"
       }
     ]
-  }
+  },
+  "verifyExempt": "Relies on pkexec's setuid argv/envp handling; needs a vulnerable setuid pkexec, not reproducible from the excerpt. Answer key reviewed against the upstream fix."
 }

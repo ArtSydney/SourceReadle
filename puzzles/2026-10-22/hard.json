@@ -100,5 +100,58 @@
         "url": "https://cwe.mitre.org/data/definitions/195.html"
       }
     ]
-  }
+  },
+  "verify": {
+    "version": 1,
+    "image": "gcc:13",
+    "build": [
+      "gcc -O0 -o target target.c"
+    ],
+    "run": "sh poc.sh",
+    "timeoutSec": 15,
+    "network": false,
+    "harness": [
+      {
+        "name": "poc.sh",
+        "code": "#!/bin/sh\n# The oversized copy runs off the stack buffer and crashes the process\n# (non-zero / signal) => exploited (exit 0). A clean exit means the copy was\n# prevented => blocked (exit 1).\n./target >/dev/null 2>&1\n[ $? -ne 0 ] && exit 0 || exit 1\n"
+      },
+      {
+        "name": "target.c",
+        "code": "#include <string.h>\n\nstatic int ATTACK_LEN;\nint read_int(int sock) { (void)sock; return ATTACK_LEN; }\n\nint recv_msg(int sock, const char *payload) {\n    char buf[1024];\n    int len = read_int(sock);\n    if (len > (int)sizeof(buf)) {\n        return -1;\n    }\n    memcpy(buf, payload, len);       /* len converts to a huge size_t */\n    return 0;\n}\n\nint main(void) {\n    static char payload[2048];\n    memset(payload, 'A', sizeof(payload));\n    ATTACK_LEN = -1;                 /* negative length: slips past a signed check */\n    recv_msg(0, payload);\n    return 0;                        /* reached only if no overflow fired */\n}\n"
+      }
+    ],
+    "original": {
+      "expect": "exploited"
+    },
+    "fixes": [
+      {
+        "expect": "exploited",
+        "files": [
+          {
+            "name": "target.c",
+            "code": "#include <string.h>\n\nstatic int ATTACK_LEN;\nint read_int(int sock) { (void)sock; return ATTACK_LEN; }\n\nint recv_msg(int sock, const char *payload) {\n    char buf[1024];\n    int len = read_int(sock);\n    if (len > (int)sizeof(buf)) {\n        return -1;\n    }\n    memcpy(buf, payload, (size_t)len);   /* explicit cast: still SIZE_MAX */\n    return 0;\n}\n\nint main(void) {\n    static char payload[2048];\n    memset(payload, 'A', sizeof(payload));\n    ATTACK_LEN = -1;                 /* negative length: slips past a signed check */\n    recv_msg(0, payload);\n    return 0;                        /* reached only if no overflow fired */\n}\n"
+          }
+        ]
+      },
+      {
+        "expect": "blocked",
+        "files": [
+          {
+            "name": "target.c",
+            "code": "#include <string.h>\n\nstatic int ATTACK_LEN;\nint read_int(int sock) { (void)sock; return ATTACK_LEN; }\n\nint recv_msg(int sock, const char *payload) {\n    char buf[1024];\n    int raw = read_int(sock);\n    if (raw < 0 || (size_t)raw > sizeof(buf)) {\n        return -1;\n    }\n    size_t len = (size_t)raw;\n    memcpy(buf, payload, len);\n    return 0;\n}\n\nint main(void) {\n    static char payload[2048];\n    memset(payload, 'A', sizeof(payload));\n    ATTACK_LEN = -1;                 /* negative length: slips past a signed check */\n    recv_msg(0, payload);\n    return 0;                        /* reached only if no overflow fired */\n}\n"
+          }
+        ]
+      },
+      {
+        "expect": "exploited",
+        "files": [
+          {
+            "name": "target.c",
+            "code": "#include <string.h>\n\nstatic int ATTACK_LEN;\nint read_int(int sock) { (void)sock; return ATTACK_LEN; }\n\nint recv_msg(int sock, const char *payload) {\n    char buf[4096];\n    int len = read_int(sock);\n    if (len > (int)sizeof(buf)) {\n        return -1;\n    }\n    memcpy(buf, payload, len);\n    return 0;\n}\n\nint main(void) {\n    static char payload[2048];\n    memset(payload, 'A', sizeof(payload));\n    ATTACK_LEN = -1;                 /* negative length: slips past a signed check */\n    recv_msg(0, payload);\n    return 0;                        /* reached only if no overflow fired */\n}\n"
+          }
+        ]
+      }
+    ]
+  },
+  "verified": true
 }

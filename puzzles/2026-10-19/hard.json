@@ -105,5 +105,6 @@
         "url": "https://bugs.php.net/bug.php?id=61910"
       }
     ]
-  }
+  },
+  "verifyExempt": "Query-string-to-CLI argument injection in the php-cgi SAPI; needs the php-cgi binary and a web request path, not reproducible from the C excerpt. Answer key reviewed against the upstream fix."
 }

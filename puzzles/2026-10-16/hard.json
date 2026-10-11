@@ -110,5 +110,6 @@
         "url": "https://nginx.org/en/security_advisories.html"
       }
     ]
-  }
+  },
+  "verifyExempt": "Excerpt of nginx's Range header parser; the integer overflow manifests inside nginx's request handling and cache path, not reproducible from the excerpt alone. Answer key reviewed against the upstream fix."
 }

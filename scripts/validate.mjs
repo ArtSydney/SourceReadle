@@ -11,8 +11,9 @@ const puzzlesDir = join(root, "puzzles");
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const errors = [], warnings = [];
-let count = 0;
+let count = 0, nVerified = 0, nExempt = 0;
 const seenIds = new Set();
+const tally = (p) => { if (p?.verified) nVerified++; else if (p?.verifyExempt) nExempt++; };
 
 if (!existsSync(puzzlesDir)) { console.error("No puzzles/ directory."); process.exit(1); }
 
@@ -25,7 +26,7 @@ for (const date of readdirSync(puzzlesDir).sort()) {
       try { p = JSON.parse(readFileSync(join(puzzlesDir, "intro", f), "utf8")); }
       catch (e) { errors.push(`intro/${f}: invalid JSON — ${e.message}`); continue; }
       if (p.difficulty !== "intro") errors.push(`intro/${f}: difficulty must be "intro"`);
-      const r = validatePuzzle(p, { seenIds });
+      const r = validatePuzzle(p, { seenIds }); tally(p);
       errors.push(...r.errors); warnings.push(...r.warnings);
     }
     continue;
@@ -37,7 +38,7 @@ for (const date of readdirSync(puzzlesDir).sort()) {
       let p;
       try { p = JSON.parse(readFileSync(join(puzzlesDir, "examples", f), "utf8")); }
       catch (e) { errors.push(`examples/${f}: invalid JSON — ${e.message}`); continue; }
-      const r = validatePuzzle(p, { seenIds });
+      const r = validatePuzzle(p, { seenIds }); tally(p);
       errors.push(...r.errors); warnings.push(...r.warnings);
     }
     continue;
@@ -50,12 +51,12 @@ for (const date of readdirSync(puzzlesDir).sort()) {
     let p;
     try { p = JSON.parse(readFileSync(file, "utf8")); }
     catch (e) { errors.push(`${date}/${diff}.json: invalid JSON — ${e.message}`); continue; }
-    const r = validatePuzzle(p, { date, diff, seenIds });
+    const r = validatePuzzle(p, { date, diff, seenIds }); tally(p);
     errors.push(...r.errors); warnings.push(...r.warnings);
   }
 }
 
-console.log(`Checked ${count} puzzle(s).`);
+console.log(`Checked ${count} puzzle(s). Verification: ${nVerified} verified, ${nExempt} exempt, ${count - nVerified - nExempt} unmarked.`);
 if (warnings.length) { console.log(`\n${warnings.length} warning(s):`); warnings.forEach(w => console.log("  ⚠ " + w)); }
 if (errors.length) { console.error(`\n${errors.length} error(s):`); errors.forEach(e => console.error("  ✗ " + e)); process.exit(1); }
 console.log("\nAll puzzles valid ✓");

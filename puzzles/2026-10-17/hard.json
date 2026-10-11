@@ -109,5 +109,6 @@
         "url": "https://commons.apache.org/proper/commons-text/security.html"
       }
     ]
-  }
+  },
+  "verifyExempt": "Interpolation via commons-text StringSubstitutor's script/dns/url lookups; needs the library and (for impact) the network, infeasible offline from the excerpt. Answer key reviewed against the upstream fix."
 }

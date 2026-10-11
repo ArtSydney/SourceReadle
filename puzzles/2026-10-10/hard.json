@@ -116,5 +116,6 @@
         "url": "https://www.troyhunt.com/everything-you-need-to-know-about2/"
       }
     ]
-  }
+  },
+  "verifyExempt": "The bug lives in GNU Bash's function-definition parser; reproducing it needs a vulnerable bash binary (long patched in base images), not this simplified C excerpt. Answer key reviewed against the upstream fix."
 }

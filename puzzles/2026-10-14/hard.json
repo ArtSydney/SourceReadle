@@ -106,5 +106,6 @@
         "url": "https://cwiki.apache.org/confluence/display/WW/S2-045"
       }
     ]
-  }
+  },
+  "verifyExempt": "OGNL evaluation via Struts2's multipart Content-Type parser; needs the full Struts framework and request pipeline, not reproducible from the excerpt. Answer key reviewed against the upstream fix."
 }

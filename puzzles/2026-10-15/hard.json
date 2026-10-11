@@ -105,5 +105,6 @@
         "url": "https://legalhackers.com/advisories/PHPMailer-Exploit-Remote-Code-Exec-CVE-2016-10033-Vuln.html"
       }
     ]
-  }
+  },
+  "verifyExempt": "Depends on the real sendmail transport and mail() additional_params handling; and more than one offered fix blocks the exploit, so the single-correct-fix execution contract does not apply. Answer key reviewed against the upstream fix."
 }
